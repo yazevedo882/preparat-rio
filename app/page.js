@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { supabase } from '../lib/supabaseClient';
 import { useAuth } from './AuthProvider';
 import Header from '../components/Header';
@@ -10,9 +11,10 @@ import { gerarPdfQuestoes } from '../lib/gerarPdf';
 const LETRAS = ['A', 'B', 'C', 'D'];
 
 export default function Home() {
-  const { user } = useAuth();
+  const { user, profile, loading } = useAuth();
+  const router = useRouter();
   const [questoes, setQuestoes] = useState([]);
-  const [tela, setTela] = useState('carregando'); // carregando | erro | filtros | quiz | resultado
+  const [tela, setTela] = useState('carregando'); // carregando | inativo | erro | filtros | quiz | resultado
   const [erroMsg, setErroMsg] = useState('');
 
   const [filtros, setFiltros] = useState({ instituto: 'Todos', ano: 'Todos', disciplina: 'Todos', assunto: 'Todos' });
@@ -27,6 +29,18 @@ export default function Home() {
   const [gerandoPdf, setGerandoPdf] = useState(false);
 
   useEffect(() => {
+    if (loading) return;
+
+    if (!user) {
+      router.replace('/login');
+      return;
+    }
+
+    if (profile && profile.ativo === false) {
+      setTela('inativo');
+      return;
+    }
+
     async function carregar() {
       const { data, error } = await supabase
         .from('questoes')
@@ -42,7 +56,7 @@ export default function Home() {
       setTela('filtros');
     }
     carregar();
-  }, []);
+  }, [user, profile, loading]);
 
   const institutos = ['Todos', ...new Set(questoes.map((q) => q.instituto))];
   const anos = ['Todos', ...new Set(questoes.map((q) => q.ano))].sort((a, b) =>
@@ -169,7 +183,26 @@ export default function Home() {
     );
   }
 
-  if (tela === 'erro') {
+  if (tela === 'inativo') {
+    return (
+      <div className="min-h-screen bg-stone-100 flex items-center justify-center p-4">
+        <div className="bg-white border-2 border-slate-900 rounded-2xl p-5 max-w-md text-center">
+          <p className="text-sm font-mono uppercase tracking-wider text-stone-400 mb-2">Acesso suspenso</p>
+          <p className="text-sm text-stone-700 mb-4">
+            Sua conta está temporariamente desativada. Entre em contato com a professora para reativar o acesso.
+          </p>
+          <button
+            onClick={async () => { await supabase.auth.signOut(); router.replace('/login'); }}
+            className="text-xs underline text-stone-400"
+          >
+            Sair
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+
     return (
       <div className="min-h-screen bg-stone-100 flex items-center justify-center p-4">
         <div className="bg-white border-2 border-red-500 rounded-2xl p-5 max-w-md text-sm text-red-700">
