@@ -58,7 +58,39 @@ Pronto — esse link pode ser compartilhado com qualquer aluno. Toda vez
 que alguém cadastrar uma questão pela tela "+ Cadastrar questão", ela
 fica salva no Supabase e aparece para todo mundo que acessar o link.
 
-## 4. Atualizações futuras
+## 5. Login de alunos e área de professores
+
+Esse projeto já vem com login de alunos, download de PDF e uma área
+exclusiva para professores cadastrarem questões.
+
+1. No Supabase, vá em **SQL Editor > New query**, cole o conteúdo do
+   arquivo `supabase-schema-parte2-login.sql` e clique em **Run**.
+2. Ainda no Supabase, vá em **Authentication > Providers > Email** e
+   desligue a opção **"Confirm email"**. Assim, quando alguém criar
+   uma conta no site, ela já pode usar na hora (sem precisar clicar
+   em um link enviado por e-mail).
+3. Suba/atualize o código no GitHub normalmente — a Vercel publica a
+   nova versão automaticamente.
+
+### Como funciona
+
+- Qualquer pessoa pode criar uma conta em **"Criar conta"**.
+- Ao criar a conta, a pessoa pode marcar a opção **"Sou professor e
+  quero solicitar acesso"**.
+- Alunos logados podem clicar em **"Baixar lista em PDF"** na tela de
+  filtros (com ou sem gabarito).
+- A tela **"+ Cadastrar questão"** (em "Área do professor") só
+  aparece/funciona para contas aprovadas como professor.
+
+### Como aprovar um professor
+
+1. No Supabase, vá em **Table Editor > profiles**.
+2. Encontre a linha da pessoa pelo e-mail.
+3. Mude o valor da coluna **is_professor** de `false` para `true` e
+   salve.
+4. A partir do próximo login, essa pessoa já pode cadastrar questões.
+
+## 6. Atualizações futuras
 
 Sempre que quiser mudar o código (cores, textos, etc.), edite os
 arquivos no GitHub (botão de lápis em cada arquivo) ou suba uma nova
@@ -69,12 +101,19 @@ nova versão em cerca de 1 minuto após cada alteração.
 
 ```
 app/
-  page.js              -> tela principal (filtros + quiz + resultado)
-  cadastro/page.js      -> tela de cadastro de questões (com imagem)
-  api/explicacao/route.js -> gera explicação com IA quando necessário
+  page.js                  -> tela principal (filtros + quiz + resultado)
+  professor/page.js        -> área do professor (cadastro de questões, com imagem)
+  login/page.js            -> tela de login
+  cadastro-conta/page.js   -> tela de criação de conta (aluno/professor)
+  api/explicacao/route.js  -> gera explicação com IA quando necessário
+  AuthProvider.js          -> controla o estado de login em todo o site
   layout.js, globals.css
+components/
+  Header.js                -> barra de login/conta exibida nas páginas
 lib/
-  supabaseClient.js     -> conexão com o Supabase
-supabase-schema.sql      -> script para criar tabela, bucket e questões iniciais
-.env.local.example       -> modelo das variáveis de ambiente
+  supabaseClient.js        -> conexão com o Supabase
+  gerarPdf.js              -> gera o PDF da lista de questões
+supabase-schema.sql              -> script 1: tabela de questões, bucket e seed
+supabase-schema-parte2-login.sql -> script 2: login, perfis e permissões de professor
+.env.local.example               -> modelo das variáveis de ambiente
 ```
