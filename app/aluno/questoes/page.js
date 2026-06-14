@@ -34,9 +34,9 @@ export default function AlunoQuestoes() {
     try {
       let query = supabase.from('questoes').select('*');
 
-      if (filtros.disciplina) query = query.eq('disciplina', filtros.disciplina);
-      if (filtros.assunto) query = query.eq('assunto', filtros.assunto);
-      if (filtros.instituto) query = query.eq('instituto', filtros.instituto);
+      if (filtros.disciplina) query = query.ilike('disciplina', `%${filtros.disciplina}%`);
+      if (filtros.assunto) query = query.ilike('assunto', `%${filtros.assunto}%`);
+      if (filtros.instituto) query = query.ilike('instituto', `%${filtros.instituto}%`);
 
       const { data, error } = await query;
       if (error) throw error;
