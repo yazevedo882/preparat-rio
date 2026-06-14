@@ -7,7 +7,7 @@ import Link from 'next/link';
 import html2canvas from 'html2canvas';
 import jsPDF from 'jspdf';
 
-export default function RevisarQuestoes() {
+export default function AlunoRevisar() {
   const router = useRouter();
   const [usuario, setUsuario] = useState(null);
   const [questoes, setQuestoes] = useState([]);
