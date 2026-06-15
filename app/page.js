@@ -203,6 +203,7 @@ export default function Home() {
   }
 
 
+  if (tela === 'erro') {
     return (
       <div className="min-h-screen bg-stone-100 flex items-center justify-center p-4">
         <div className="bg-white border-2 border-red-500 rounded-2xl p-5 max-w-md text-sm text-red-700">
