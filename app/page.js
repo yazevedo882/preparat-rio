@@ -23,8 +23,13 @@ export default function Home() {
   const { user, profile, loading } = useAuth();
   const router = useRouter();
   const [questoes, setQuestoes] = useState([]);
-  const [tela, setTela] = useState('carregando'); // carregando | inativo | erro | filtros | quiz | resultado
+  const [tela, setTela] = useState('carregando'); // carregando | inativo | erro | filtros | provas-lista | quiz | resultado
   const [erroMsg, setErroMsg] = useState('');
+
+  // Aba "Provas": lista de provas oficiais e qual está em andamento
+  const [provas, setProvas] = useState([]);
+  const [provaAtual, setProvaAtual] = useState(null);
+  const [origemLista, setOrigemLista] = useState('filtro'); // 'filtro' | 'prova'
 
   const [filtros, setFiltros] = useState({
     instituto: 'Todos',
@@ -69,6 +74,18 @@ export default function Home() {
         return;
       }
       setQuestoes(data || []);
+
+      // Carrega provas oficiais que já têm questões cadastradas
+      const { data: provasData } = await supabase
+        .from('provas')
+        .select('*, questoes(count)')
+        .order('ano', { ascending: false });
+      setProvas(
+        (provasData || [])
+          .map((p) => ({ ...p, total: p.questoes?.[0]?.count || 0 }))
+          .filter((p) => p.total > 0)
+      );
+
       setTela('filtros');
     }
     carregar();
@@ -113,6 +130,28 @@ export default function Home() {
     setSelecionada(null);
     setRespondida(false);
     setExplicacao('');
+    setOrigemLista('filtro');
+    setTela('quiz');
+  }
+
+  // Carrega todas as questões de uma prova oficial, na ordem original
+  async function iniciarProva(prova) {
+    const { data, error } = await supabase
+      .from('questoes')
+      .select('*')
+      .eq('prova_id', prova.id)
+      .order('numero_na_prova', { ascending: true });
+
+    if (error || !data?.length) return;
+
+    setProvaAtual(prova);
+    setLista(data);
+    setIndice(0);
+    setRespostas([]);
+    setSelecionada(null);
+    setRespondida(false);
+    setExplicacao('');
+    setOrigemLista('prova');
     setTela('quiz');
   }
 
@@ -253,6 +292,51 @@ export default function Home() {
           <p className="text-xs text-stone-500 mt-1">banco de questões · institutos federais</p>
         </div>
 
+        {(tela === 'filtros' || tela === 'provas-lista') && (
+          <div className="flex gap-2 mb-3">
+            <button
+              onClick={() => setTela('filtros')}
+              className={`flex-1 font-mono uppercase tracking-wider text-xs font-bold py-2 rounded-lg border-2 transition ${
+                tela === 'filtros' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-900 border-slate-900'
+              }`}
+            >
+              Questões
+            </button>
+            <button
+              onClick={() => setTela('provas-lista')}
+              className={`flex-1 font-mono uppercase tracking-wider text-xs font-bold py-2 rounded-lg border-2 transition ${
+                tela === 'provas-lista' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-900 border-slate-900'
+              }`}
+            >
+              Provas
+            </button>
+          </div>
+        )}
+
+        {tela === 'provas-lista' && (
+          <div className="bg-white border-2 border-slate-900 rounded-2xl p-5">
+            <p className="text-sm text-stone-600 mb-4">Escolha uma prova oficial para resolver completa, na ordem original.</p>
+            {provas.length === 0 ? (
+              <p className="text-sm text-stone-400">Nenhuma prova disponível ainda.</p>
+            ) : (
+              <div className="space-y-2">
+                {provas.map((p) => (
+                  <button
+                    key={p.id}
+                    onClick={() => iniciarProva(p)}
+                    className="w-full text-left border border-stone-200 rounded-xl p-3 hover:bg-stone-50 transition"
+                  >
+                    <p className="text-sm font-bold text-slate-900">{p.titulo}</p>
+                    <p className="text-xs font-mono text-stone-400 mt-1">
+                      {p.instituto} · {p.ano} · {p.disciplina} · {p.total} questõe{p.total === 1 ? '' : 's'}
+                    </p>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
         {tela === 'filtros' && (
           <div className="bg-white border-2 border-slate-900 rounded-2xl p-5">
             <p className="text-sm text-stone-600 mb-4">Monte sua lista de questões escolhendo os filtros abaixo.</p>
@@ -333,8 +417,8 @@ export default function Home() {
         {tela === 'quiz' && lista[indice] && (
           <div className="bg-white border-2 border-slate-900 rounded-2xl p-5">
             <div className="flex justify-between items-center mb-3">
-              <button onClick={() => setTela('filtros')} className="text-xs text-stone-400 font-mono underline">
-                ◂ filtros
+              <button onClick={() => setTela(origemLista === 'prova' ? 'provas-lista' : 'filtros')} className="text-xs text-stone-400 font-mono underline">
+                ◂ {origemLista === 'prova' ? 'provas' : 'filtros'}
               </button>
               <span className="text-xs font-mono text-stone-500">{indice + 1} / {lista.length}</span>
             </div>
@@ -347,6 +431,11 @@ export default function Home() {
               })}
             </div>
             <div className="flex flex-wrap gap-1.5 mb-3">
+              {origemLista === 'prova' && provaAtual && (
+                <span className="inline-block bg-emerald-700 text-white text-xs font-mono uppercase tracking-wider px-3 py-1 rounded-full">
+                  {provaAtual.titulo}
+                </span>
+              )}
               <span className="inline-block bg-slate-900 text-white text-xs font-mono uppercase tracking-wider px-3 py-1 rounded-full">
                 {lista[indice].instituto} · {lista[indice].ano} · {lista[indice].disciplina} · {lista[indice].assunto}
               </span>
@@ -463,10 +552,10 @@ export default function Home() {
               })}
             </div>
             <button
-              onClick={() => setTela('filtros')}
+              onClick={() => setTela(origemLista === 'prova' ? 'provas-lista' : 'filtros')}
               className="w-full bg-emerald-700 text-white font-mono uppercase tracking-wider text-sm font-bold py-3 rounded-lg transition"
             >
-              Nova lista ▸
+              {origemLista === 'prova' ? 'Voltar para provas ▸' : 'Nova lista ▸'}
             </button>
           </div>
         )}
