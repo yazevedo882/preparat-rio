@@ -10,6 +10,15 @@ import { gerarPdfQuestoes } from '../lib/gerarPdf';
 
 const LETRAS = ['A', 'B', 'C', 'D'];
 
+const LABEL_PADRAO = {
+  contexto_cotidiano: 'Contexto cotidiano',
+  leitura_grafico: 'Gráfico/tabela',
+  julgamento_itens: 'Itens I/II/III',
+  texto_apoio: 'Texto de apoio',
+  classificacao_comparacao: 'Classificação',
+  teoria_aplicacao: 'Teoria + aplicação',
+};
+
 export default function Home() {
   const { user, profile, loading } = useAuth();
   const router = useRouter();
@@ -17,7 +26,14 @@ export default function Home() {
   const [tela, setTela] = useState('carregando'); // carregando | inativo | erro | filtros | quiz | resultado
   const [erroMsg, setErroMsg] = useState('');
 
-  const [filtros, setFiltros] = useState({ instituto: 'Todos', ano: 'Todos', disciplina: 'Todos', assunto: 'Todos' });
+  const [filtros, setFiltros] = useState({
+    instituto: 'Todos',
+    ano: 'Todos',
+    disciplina: 'Todos',
+    assunto: 'Todos',
+    padrao: 'Todos',
+    dificuldade: 'Todos',
+  });
   const [lista, setLista] = useState([]);
   const [indice, setIndice] = useState(0);
   const [selecionada, setSelecionada] = useState(null);
@@ -67,11 +83,19 @@ export default function Home() {
     questoes.filter((q) => filtros.disciplina === 'Todos' || q.disciplina === filtros.disciplina).map((q) => q.assunto)
   )];
 
+  // Padrões e dificuldades: só mostra opções que existem no banco
+  const padroesExistentes = ['Todos', ...new Set(questoes.map((q) => q.padrao).filter(Boolean))];
+  const dificuldadesExistentes = ['Todos', ...(['Fácil', 'Médio', 'Difícil'].filter((d) =>
+    questoes.some((q) => q.dificuldade === d)
+  ))];
+
   const encontradas = questoes.filter((q) =>
     (filtros.instituto === 'Todos' || q.instituto === filtros.instituto) &&
     (filtros.ano === 'Todos' || q.ano === Number(filtros.ano)) &&
     (filtros.disciplina === 'Todos' || q.disciplina === filtros.disciplina) &&
-    (filtros.assunto === 'Todos' || q.assunto === filtros.assunto)
+    (filtros.assunto === 'Todos' || q.assunto === filtros.assunto) &&
+    (filtros.padrao === 'Todos' || q.padrao === filtros.padrao) &&
+    (filtros.dificuldade === 'Todos' || q.dificuldade === filtros.dificuldade)
   );
 
   function atualizarFiltro(campo, valor) {
@@ -158,7 +182,7 @@ export default function Home() {
     return grupos;
   }
 
-  const Select = ({ label, opcoes, valor, onChange }) => (
+  const Select = ({ label, opcoes, valor, onChange, labelFn }) => (
     <div>
       <label className="block text-xs font-mono uppercase tracking-wider text-stone-500 mb-1">{label}</label>
       <select
@@ -168,7 +192,7 @@ export default function Home() {
       >
         {opcoes.map((o) => (
           <option key={o} value={o}>
-            {o}
+            {labelFn ? labelFn(o) : o}
           </option>
         ))}
       </select>
@@ -202,7 +226,6 @@ export default function Home() {
     );
   }
 
-
   if (tela === 'erro') {
     return (
       <div className="min-h-screen bg-stone-100 flex items-center justify-center p-4">
@@ -232,6 +255,33 @@ export default function Home() {
               <Select label="Disciplina" opcoes={disciplinas} valor={filtros.disciplina} onChange={(e) => atualizarFiltro('disciplina', e.target.value)} />
               <Select label="Assunto" opcoes={assuntos} valor={filtros.assunto} onChange={(e) => atualizarFiltro('assunto', e.target.value)} />
             </div>
+
+            {/* ── Filtros de Padrão e Dificuldade (só aparecem se há questões classificadas) ── */}
+            {(padroesExistentes.length > 1 || dificuldadesExistentes.length > 1) && (
+              <div className="border border-stone-200 rounded-xl p-3 mb-3 space-y-3 bg-stone-50">
+                <p className="text-xs font-mono uppercase tracking-wider text-stone-400">Filtros avançados</p>
+                <div className="grid grid-cols-2 gap-3">
+                  {padroesExistentes.length > 1 && (
+                    <Select
+                      label="Padrão"
+                      opcoes={padroesExistentes}
+                      valor={filtros.padrao}
+                      onChange={(e) => atualizarFiltro('padrao', e.target.value)}
+                      labelFn={(v) => v === 'Todos' ? 'Todos' : (LABEL_PADRAO[v] || v)}
+                    />
+                  )}
+                  {dificuldadesExistentes.length > 1 && (
+                    <Select
+                      label="Dificuldade"
+                      opcoes={dificuldadesExistentes}
+                      valor={filtros.dificuldade}
+                      onChange={(e) => atualizarFiltro('dificuldade', e.target.value)}
+                    />
+                  )}
+                </div>
+              </div>
+            )}
+
             <div className="border-t border-stone-200 mt-4 pt-4 flex items-center justify-between">
               <span className="text-sm text-stone-600">
                 <span className="font-bold text-slate-900">{encontradas.length}</span> questõe{encontradas.length === 1 ? '' : 's'} encontrada{encontradas.length === 1 ? '' : 's'}
@@ -289,8 +339,24 @@ export default function Home() {
                 return <span key={i} className={`w-2.5 h-2.5 rounded-full ${cor}`} />;
               })}
             </div>
-            <div className="inline-block bg-slate-900 text-white text-xs font-mono uppercase tracking-wider px-3 py-1 rounded-full mb-3">
-              {lista[indice].instituto} · {lista[indice].ano} · {lista[indice].disciplina} · {lista[indice].assunto}
+            <div className="flex flex-wrap gap-1.5 mb-3">
+              <span className="inline-block bg-slate-900 text-white text-xs font-mono uppercase tracking-wider px-3 py-1 rounded-full">
+                {lista[indice].instituto} · {lista[indice].ano} · {lista[indice].disciplina} · {lista[indice].assunto}
+              </span>
+              {lista[indice].dificuldade && (
+                <span className={`inline-block text-xs font-mono uppercase tracking-wider px-2 py-1 rounded-full border ${
+                  lista[indice].dificuldade === 'Fácil' ? 'bg-emerald-50 border-emerald-300 text-emerald-700' :
+                  lista[indice].dificuldade === 'Médio' ? 'bg-amber-50 border-amber-300 text-amber-700' :
+                  'bg-red-50 border-red-300 text-red-700'
+                }`}>
+                  {lista[indice].dificuldade}
+                </span>
+              )}
+              {lista[indice].padrao && (
+                <span className="inline-block bg-stone-100 border border-stone-300 text-stone-600 text-xs font-mono px-2 py-1 rounded-full">
+                  {LABEL_PADRAO[lista[indice].padrao] || lista[indice].padrao}
+                </span>
+              )}
             </div>
             {lista[indice].imagem_url && (
               // eslint-disable-next-line @next/next/no-img-element
