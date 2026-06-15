@@ -133,32 +133,39 @@ export default function Home() {
     setRespondida(true);
     const q = lista[indice];
     const acertou = letra === q.correta;
-    setRespostas((r) => [...r, { acertou, assunto: q.assunto }]);
+    setRespostas((r) => [...r, { acertou, assunto: q.assunto, disciplina: q.disciplina }]);
 
-    if (q.explicacao) {
-      setExplicacao(q.explicacao);
-      return;
+    // Só busca explicação se ERROU
+    if (!acertou) {
+      // Usa cache do banco (explicacao ou explicacao_gerada)
+      if (q.explicacao || q.explicacao_gerada) {
+        setExplicacao(q.explicacao || q.explicacao_gerada);
+        return;
+      }
+      setCarregandoExplicacao(true);
+      try {
+        const resp = await fetch('/api/explicacao', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            questao_id: q.id,
+            enunciado: q.enunciado,
+            opcoes: q.opcoes,
+            correta: q.correta,
+            disciplina: q.disciplina,
+            assunto: q.assunto,
+            acertou: false,
+          }),
+        });
+        const data = await resp.json();
+        // Salva no objeto local para não buscar de novo se voltar
+        q.explicacao_gerada = data.explicacao;
+        setExplicacao(data.explicacao || 'Não foi possível gerar a explicação agora.');
+      } catch (e) {
+        setExplicacao('Não foi possível gerar a explicação agora.');
+      }
+      setCarregandoExplicacao(false);
     }
-
-    setCarregandoExplicacao(true);
-    try {
-      const resp = await fetch('/api/explicacao', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          enunciado: q.enunciado,
-          opcoes: q.opcoes,
-          correta: q.correta,
-          disciplina: q.disciplina,
-          assunto: q.assunto,
-        }),
-      });
-      const data = await resp.json();
-      setExplicacao(data.explicacao || 'Não foi possível gerar a explicação agora.');
-    } catch (e) {
-      setExplicacao('Não foi possível gerar a explicação agora. Verifique sua conexão e tente novamente.');
-    }
-    setCarregandoExplicacao(false);
   }
 
   function proxima() {
