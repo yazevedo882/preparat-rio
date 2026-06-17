@@ -1,76 +1,62 @@
-import Anthropic from '@anthropic-ai/sdk';
+export async function POST(request) {
+  try {
+    if (!process.env.GROQ_API_KEY) {
+      return Response.json({ error: 'IA não configurada.' }, { status: 500 });
+    }
 
-const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+    const contentType = request.headers.get('content-type') || '';
+    let textoProva = '';
 
-const SYSTEM_PROMPT = `Você é um assistente especializado em extrair questões de provas de Institutos Federais do Brasil.
+    if (contentType.includes('multipart/form-data')) {
+      const formData = await request.formData();
+      textoProva = formData.get('texto') || '';
+      // Nota: Groq não suporta imagens ainda, só texto
+      if (!textoProva) {
+        return Response.json({ error: 'O Groq aceita apenas texto por enquanto. Cole o texto da prova.' }, { status: 400 });
+      }
+    } else {
+      const body = await request.json();
+      textoProva = body.texto || '';
+    }
 
-Dado um texto de prova (ou transcrição de imagem/PDF), extraia TODAS as questões e retorne APENAS um JSON com o seguinte formato:
+    const prompt = `Extraia TODAS as questões desta prova de Instituto Federal e retorne APENAS um JSON sem markdown:
 {
   "questoes": [
     {
       "numero": 1,
       "enunciado": "texto completo do enunciado",
-      "opcoes": ["texto da A", "texto da B", "texto da C", "texto da D"],
+      "opcoes": ["texto A", "texto B", "texto C", "texto D"],
       "numOpcoes": 4
     }
   ],
-  "instituto": "ex: IFSP (se identificado no texto, senão null)",
+  "instituto": "ex: IFSP ou null",
   "ano": 2024,
-  "disciplina": "ex: Matemática (se identificado, senão null)"
+  "disciplina": null
 }
 
-REGRAS:
-- Extraia o enunciado completo de cada questão
-- As opções devem ser só o texto, sem a letra (ex: "156" e não "A) 156")
-- numOpcoes pode ser 4 ou 5 dependendo da prova
-- Se não conseguir identificar instituto/ano/disciplina, deixe null
-- Retorne APENAS o JSON, sem markdown, sem explicação`;
+REGRAS: enunciado completo, opções sem a letra, numOpcoes = 4 ou 5.
 
-export async function POST(request) {
-  try {
-    const contentType = request.headers.get('content-type') || '';
-    let userMessage;
+Texto da prova:
+${textoProva}`;
 
-    if (contentType.includes('multipart/form-data')) {
-      const formData = await request.formData();
-      const texto = formData.get('texto');
-      const imagem = formData.get('imagem');
-
-      if (imagem && imagem.size > 0) {
-        const bytes = await imagem.arrayBuffer();
-        const base64 = Buffer.from(bytes).toString('base64');
-        const mediaType = imagem.type || 'image/jpeg';
-
-        userMessage = [
-          {
-            type: 'image',
-            source: { type: 'base64', media_type: mediaType, data: base64 },
-          },
-          {
-            type: 'text',
-            text: 'Extraia todas as questões desta prova de Instituto Federal.',
-          },
-        ];
-      } else if (texto) {
-        userMessage = texto;
-      } else {
-        return Response.json({ error: 'Nenhum conteúdo enviado' }, { status: 400 });
-      }
-    } else {
-      const body = await request.json();
-      userMessage = body.texto || '';
-      if (!userMessage) return Response.json({ error: 'texto obrigatório' }, { status: 400 });
-    }
-
-    const msg = await client.messages.create({
-      model: 'claude-sonnet-4-6',
-      max_tokens: 8000,
-      system: SYSTEM_PROMPT,
-      messages: [{ role: 'user', content: userMessage }],
+    const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${process.env.GROQ_API_KEY}`,
+      },
+      body: JSON.stringify({
+        model: 'llama-3.1-70b-versatile',
+        max_tokens: 8000,
+        temperature: 0.1,
+        messages: [{ role: 'user', content: prompt }],
+      }),
     });
 
-    const texto = msg.content[0].text.trim();
-    const resultado = JSON.parse(texto);
+    const data = await res.json();
+    const texto = data?.choices?.[0]?.message?.content || '{}';
+    const clean = texto.replace(/```json|```/g, '').trim();
+    const resultado = JSON.parse(clean);
     return Response.json(resultado);
   } catch (e) {
     return Response.json({ error: e.message }, { status: 500 });
