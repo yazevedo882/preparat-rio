@@ -5,16 +5,6 @@ import Link from 'next/link';
 import { useAuth } from '../AuthProvider';
 import { supabase } from '../../lib/supabaseClient';
 
-const PADROES = [
-  { value: '', label: '— não classificado —' },
-  { value: 'contexto_cotidiano', label: 'Contextualização cotidiana' },
-  { value: 'leitura_grafico', label: 'Leitura de gráfico/tabela' },
-  { value: 'julgamento_itens', label: 'Julgamento de itens (I, II, III)' },
-  { value: 'texto_apoio', label: 'Texto de apoio + interpretação' },
-  { value: 'classificacao_comparacao', label: 'Classificação / comparação' },
-  { value: 'teoria_aplicacao', label: 'Teoria + aplicação direta' },
-];
-
 const DIFICULDADES = [
   { value: '', label: '— não classificado —' },
   { value: 'Fácil', label: 'Fácil' },
@@ -26,7 +16,6 @@ const CAMPOS_VAZIOS = {
   instituto: '', ano: '', disciplina: '', assunto: '',
   enunciado: '', opcaoA: '', opcaoB: '', opcaoC: '', opcaoD: '', opcaoE: '',
   correta: 'A', explicacao: '', padrao: '', dificuldade: '', numOpcoes: 4,
-  prova_id: null,
 };
 
 function Shell({ children }) {
@@ -70,7 +59,7 @@ function Campo({ label, valor, onChange, placeholder, textarea, type }) {
 }
 
 // Formulário de revisão/edição de uma questão
-function FormQuestao({ q, idx, total, onChange, onClassificar, classificando, provas }) {
+function FormQuestao({ q, idx, total, onChange, onClassificar, classificando, padroesDisponiveis }) {
   const letras = q.numOpcoes === 5 ? ['A','B','C','D','E'] : ['A','B','C','D'];
   return (
     <div className="bg-white border-2 border-slate-900 rounded-2xl p-4 space-y-3">
@@ -126,27 +115,22 @@ function FormQuestao({ q, idx, total, onChange, onClassificar, classificando, pr
 
       <Campo label="Explicação (opcional)" textarea valor={q.explicacao} onChange={e => onChange(idx, 'explicacao', e.target.value)} placeholder="Deixe em branco para a IA gerar" />
 
-      <div>
-        <label className="block text-xs font-mono uppercase tracking-wider text-stone-500 mb-1">Prova vinculada (opcional)</label>
-        <select
-          value={q.prova_id || ''}
-          onChange={e => onChange(idx, 'prova_id', e.target.value ? Number(e.target.value) : null)}
-          className="w-full border border-stone-300 rounded-lg p-2.5 bg-stone-50 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-600"
-        >
-          <option value="">— nenhuma —</option>
-          {(provas || []).map(p => <option key={p.id} value={p.id}>{p.titulo} ({p.instituto} {p.ano})</option>)}
-        </select>
-      </div>
-
       <div className="border border-stone-200 rounded-xl p-3 space-y-2 bg-stone-50">
         <p className="text-xs font-mono uppercase tracking-wider text-stone-400">Classificação</p>
         {q.dicaIA && <p className="text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2">💡 {q.dicaIA}</p>}
         <div className="grid grid-cols-2 gap-2">
           <div>
             <label className="block text-xs font-mono uppercase tracking-wider text-stone-500 mb-1">Padrão</label>
-            <select value={q.padrao} onChange={e => onChange(idx, 'padrao', e.target.value)} className="w-full border border-stone-300 rounded-lg p-2 bg-white text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-600">
-              {PADROES.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
-            </select>
+            <input
+              list={`padroes-lista-${idx}`}
+              value={q.padrao || ''}
+              onChange={e => onChange(idx, 'padrao', e.target.value)}
+              placeholder="— não classificado —"
+              className="w-full border border-stone-300 rounded-lg p-2 bg-white text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-600"
+            />
+            <datalist id={`padroes-lista-${idx}`}>
+              {(padroesDisponiveis || []).map(p => <option key={p} value={p} />)}
+            </datalist>
           </div>
           <div>
             <label className="block text-xs font-mono uppercase tracking-wider text-stone-500 mb-1">Dificuldade</label>
@@ -190,11 +174,15 @@ export default function Professor() {
   const [buscandoSalvas, setBuscandoSalvas] = useState(false);
   const [questaoEditando, setQuestaoEditando] = useState(null);
 
-  // Provas (agrupamento de questões em provas oficiais)
-  const [provas, setProvas] = useState([]);
-  const [buscandoProvas, setBuscandoProvas] = useState(false);
-  const [provaAtual, setProvaAtual] = useState(null); // prova selecionada/criada para receber as próximas questões
-  const [novaProva, setNovaProva] = useState({ titulo: '', instituto: '', ano: '', disciplina: '' });
+  // Biblioteca de padrões — vem do banco, cresce conforme a IA classifica
+  const [padroesDisponiveis, setPadroesDisponiveis] = useState([]);
+
+  // Busca padrões existentes ao carregar a tela
+  useEffect(() => {
+    supabase.from('padroes').select('nome').order('nome').then(({ data }) => {
+      if (data) setPadroesDisponiveis(data.map(p => p.nome));
+    });
+  }, []);
 
   const atualizar = useCallback((campo, valor) => {
     setForm(f => ({ ...f, [campo]: valor }));
@@ -202,11 +190,6 @@ export default function Professor() {
 
   const atualizarLote = useCallback((idx, campo, valor) => {
     setQuestoesLote(qs => qs.map((q, i) => i === idx ? { ...q, [campo]: valor } : q));
-  }, []);
-
-  // Carrega a lista de provas (com contagem de questões) ao abrir a página
-  useEffect(() => {
-    buscarProvas();
   }, []);
 
   if (loading) return <Shell><div className="bg-white border-2 border-slate-900 rounded-2xl p-5 text-sm text-stone-500">Carregando...</div></Shell>;
@@ -247,9 +230,25 @@ export default function Professor() {
       const data = await res.json();
       if (data.error) throw new Error(data.error);
       if (idx === 'manual') {
-        setForm(f => ({ ...f, padrao: data.padrao || f.padrao, dificuldade: data.dificuldade || f.dificuldade, dicaIA: data.justificativa }));
+        setForm(f => ({
+          ...f,
+          padrao: data.padrao || f.padrao,
+          assunto: f.assunto?.trim() ? f.assunto : (data.assunto || f.assunto),
+          dificuldade: data.dificuldade || f.dificuldade,
+          dicaIA: data.justificativa,
+        }));
       } else {
-        setQuestoesLote(qs => qs.map((item, i) => i === idx ? { ...item, padrao: data.padrao || item.padrao, dificuldade: data.dificuldade || item.dificuldade, dicaIA: data.justificativa } : item));
+        setQuestoesLote(qs => qs.map((item, i) => i === idx ? {
+          ...item,
+          padrao: data.padrao || item.padrao,
+          assunto: item.assunto?.trim() ? item.assunto : (data.assunto || item.assunto),
+          dificuldade: data.dificuldade || item.dificuldade,
+          dicaIA: data.justificativa,
+        } : item));
+      }
+      // Se a IA criou um padrão novo, atualiza a lista local para aparecer no autocomplete
+      if (data.padrao_novo && data.padrao && !padroesDisponiveis.includes(data.padrao)) {
+        setPadroesDisponiveis(prev => [...prev, data.padrao].sort());
       }
     } catch (e) { setErro('Erro IA: ' + e.message); }
     setClassificando(null);
@@ -285,13 +284,12 @@ export default function Professor() {
         const letras = q.numOpcoes === 5 ? ['A','B','C','D','E'] : ['A','B','C','D'];
         const obj = {
           ...CAMPOS_VAZIOS,
-          instituto: provaAtual?.instituto || data.instituto || '',
-          ano: provaAtual?.ano ? String(provaAtual.ano) : (data.ano ? String(data.ano) : ''),
-          disciplina: provaAtual?.disciplina || data.disciplina || '',
+          instituto: data.instituto || '',
+          ano: data.ano ? String(data.ano) : '',
+          disciplina: data.disciplina || '',
           enunciado: q.enunciado || '',
           numOpcoes: q.numOpcoes || 4,
           correta: 'A',
-          prova_id: provaAtual?.id || null,
         };
         letras.forEach((l, i) => { obj[`opcao${l}`] = q.opcoes?.[i] || ''; });
         return obj;
@@ -331,19 +329,28 @@ export default function Professor() {
         const { data: urlData } = supabase.storage.from('imagens-questoes').getPublicUrl(nomeArquivo);
         imagem_url = urlData.publicUrl;
       }
-      const prova_id = form.prova_id || null;
-      const numero_na_prova = await proximoNumeroNaProva(prova_id);
-      const { error } = await supabase.from('questoes').insert({
+      const { data: inserida, error } = await supabase.from('questoes').insert({
         instituto: form.instituto.trim(), ano, disciplina: form.disciplina.trim(),
         assunto: form.assunto.trim(), enunciado: form.enunciado.trim(), opcoes,
         correta: form.correta, explicacao: form.explicacao.trim() || null,
         imagem_url, padrao: form.padrao || null, dificuldade: form.dificuldade || null,
-        prova_id, numero_na_prova,
-      });
+      }).select('id').single();
       if (error) throw new Error(error.message);
+
+      let msgProva = '';
+      try {
+        const res = await fetch('/api/vincular-prova', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ instituto: form.instituto.trim(), ano, questao_ids: [inserida.id] }),
+        });
+        const data = await res.json();
+        if (data.titulo) msgProva = ` Vinculada à prova: ${data.titulo}${data.criada ? ' (nova)' : ''}.`;
+      } catch (e) { /* não bloqueia */ }
+
       setForm({ ...CAMPOS_VAZIOS });
       setImagem(null); setPreview(null);
-      setSucesso('Questão salva com sucesso!');
+      setSucesso('Questão salva com sucesso!' + msgProva);
     } catch (e) { setErro(e.message); }
     setSalvando(false);
   }
@@ -352,9 +359,7 @@ export default function Professor() {
   async function salvarLote() {
     setSalvandoLote(true); setErro('');
     let salvos = 0;
-
-    // Se as questões pertencem a uma prova, calcula o próximo número de sequência
-    let proximoNumero = await proximoNumeroNaProva(provaAtual?.id);
+    const idsPorProva = {}; // agrupa questao_id por "instituto|ano"
 
     for (const q of questoesLote) {
       const ano = Number(q.ano);
@@ -362,82 +367,42 @@ export default function Professor() {
       const letras = q.numOpcoes === 5 ? ['A','B','C','D','E'] : ['A','B','C','D'];
       const opcoes = letras.map(l => q[`opcao${l}`]?.trim()).filter(Boolean);
       if (opcoes.length < 4) continue;
-      const prova_id = q.prova_id ?? provaAtual?.id ?? null;
-      const numero_na_prova = prova_id ? proximoNumero : null;
-      const { error } = await supabase.from('questoes').insert({
+
+      const { data: inserida, error } = await supabase.from('questoes').insert({
         instituto: q.instituto.trim(), ano, disciplina: q.disciplina.trim(),
         assunto: q.assunto?.trim() || '', enunciado: q.enunciado.trim(), opcoes,
         correta: q.correta, explicacao: q.explicacao?.trim() || null,
         padrao: q.padrao || null, dificuldade: q.dificuldade || null,
-        prova_id, numero_na_prova,
-      });
-      if (!error) {
-        salvos++;
-        if (prova_id) proximoNumero++;
-      }
+      }).select('id').single();
+
+      if (error || !inserida) continue;
+      salvos++;
+
+      const chave = `${q.instituto.trim()}|${ano}`;
+      if (!idsPorProva[chave]) idsPorProva[chave] = { instituto: q.instituto.trim(), ano, ids: [] };
+      idsPorProva[chave].ids.push(inserida.id);
     }
+
+    // Auto-cria/vincula a prova para cada grupo instituto+ano encontrado
+    let provasInfo = [];
+    for (const chave in idsPorProva) {
+      const grupo = idsPorProva[chave];
+      try {
+        const res = await fetch('/api/vincular-prova', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ instituto: grupo.instituto, ano: grupo.ano, questao_ids: grupo.ids }),
+        });
+        const data = await res.json();
+        if (data.titulo) provasInfo.push(`${data.titulo}${data.criada ? ' (nova)' : ''}`);
+      } catch (e) { /* não bloqueia o salvamento das questões */ }
+    }
+
     setSalvandoLote(false);
-    setSucesso(`${salvos} questão(ões) salva(s) com sucesso!`);
-    if (provaAtual) {
-      setProvaAtual(null);
-      buscarProvas();
-      setModo('provas');
-    } else {
-      setModo('escolher');
-    }
+    const msgProvas = provasInfo.length ? ` Vinculadas à prova: ${provasInfo.join(', ')}.` : '';
+    setSucesso(`${salvos} questão(ões) salva(s) com sucesso!${msgProvas}`);
+    setModo('escolher');
     setQuestoesLote([]);
-  }
-
-  // ── Provas: buscar lista (com contagem de questões) ──
-  async function buscarProvas() {
-    setBuscandoProvas(true);
-    const { data } = await supabase
-      .from('provas')
-      .select('*, questoes(count)')
-      .order('id', { ascending: false });
-    setProvas((data || []).map(p => ({ ...p, total_questoes: p.questoes?.[0]?.count || 0 })));
-    setBuscandoProvas(false);
-  }
-
-  // ── Provas: criar nova prova e já entrar no modo de importação vinculado a ela ──
-  async function criarProva() {
-    setErro('');
-    if (!novaProva.titulo.trim() || !novaProva.instituto.trim() || !novaProva.disciplina.trim()) {
-      setErro('Preencha título, instituto e disciplina.');
-      return;
-    }
-    const ano = Number(novaProva.ano);
-    if (!ano || ano < 1900 || ano > 2100) { setErro('Informe um ano válido.'); return; }
-
-    setSalvando(true);
-    const { data, error } = await supabase.from('provas').insert({
-      titulo: novaProva.titulo.trim(),
-      instituto: novaProva.instituto.trim(),
-      ano,
-      disciplina: novaProva.disciplina.trim(),
-    }).select().single();
-    setSalvando(false);
-
-    if (error) { setErro(error.message); return; }
-
-    setProvaAtual(data);
-    setProvas(ps => [{ ...data, total_questoes: 0 }, ...ps]);
-    setNovaProva({ titulo: '', instituto: '', ano: '', disciplina: '' });
-    setErro(''); setSucesso('');
-    setTextoProva(''); setArquivoImagem(null); setGabarito('');
-    setModo('texto');
-  }
-
-  // ── Calcula o próximo número de questão dentro de uma prova ──
-  async function proximoNumeroNaProva(provaId) {
-    if (!provaId) return null;
-    const { data } = await supabase
-      .from('questoes')
-      .select('numero_na_prova')
-      .eq('prova_id', provaId)
-      .order('numero_na_prova', { ascending: false })
-      .limit(1);
-    return (data?.[0]?.numero_na_prova || 0) + 1;
   }
 
   // ── Buscar questões salvas para editar ──
@@ -460,7 +425,6 @@ export default function Professor() {
       assunto: q.assunto, enunciado: q.enunciado, opcoes,
       correta: q.correta, explicacao: q.explicacao || null,
       padrao: q.padrao || null, dificuldade: q.dificuldade || null,
-      prova_id: q.prova_id || null,
     }).eq('id', q.id);
     if (error) { setErro(error.message); } else { setSucesso('Questão atualizada!'); setQuestaoEditando(null); setModo('editar'); }
     setSalvando(false);
@@ -492,10 +456,6 @@ export default function Professor() {
           <button onClick={() => { setModo('editar'); setErro(''); setSucesso(''); buscarQuestoesSalvas(); }} className="w-full text-left border-2 border-slate-900 rounded-xl p-4 hover:bg-stone-50 transition">
             <p className="font-mono font-bold text-sm text-slate-900">✏️ Editar questão salva</p>
             <p className="text-xs text-stone-500 mt-1">Corrigir ou atualizar questões já cadastradas</p>
-          </button>
-          <button onClick={() => { setModo('provas'); setErro(''); setSucesso(''); buscarProvas(); }} className="w-full text-left border-2 border-slate-900 rounded-xl p-4 hover:bg-stone-50 transition">
-            <p className="font-mono font-bold text-sm text-slate-900">📋 Provas</p>
-            <p className="text-xs text-stone-500 mt-1">Organize questões em provas oficiais (ex: IFBA 2024)</p>
           </button>
         </div>
       </div>
@@ -556,18 +516,6 @@ export default function Professor() {
 
             <Campo label="Explicação (opcional)" textarea valor={form.explicacao} onChange={e => atualizar('explicacao', e.target.value)} placeholder="Deixe em branco para a IA gerar" />
 
-            <div>
-              <label className="block text-xs font-mono uppercase tracking-wider text-stone-500 mb-1">Prova vinculada (opcional)</label>
-              <select
-                value={form.prova_id || ''}
-                onChange={e => atualizar('prova_id', e.target.value ? Number(e.target.value) : null)}
-                className="w-full border border-stone-300 rounded-lg p-2.5 bg-stone-50 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-600"
-              >
-                <option value="">— nenhuma —</option>
-                {provas.map(p => <option key={p.id} value={p.id}>{p.titulo} ({p.instituto} {p.ano})</option>)}
-              </select>
-            </div>
-
             <div className="border border-stone-200 rounded-xl p-3 space-y-3 bg-stone-50">
               <div className="flex items-center justify-between">
                 <span className="text-xs font-mono uppercase tracking-wider text-stone-500">Classificação</span>
@@ -579,9 +527,16 @@ export default function Professor() {
               <div className="grid grid-cols-2 gap-2">
                 <div>
                   <label className="block text-xs font-mono uppercase tracking-wider text-stone-500 mb-1">Padrão</label>
-                  <select value={form.padrao} onChange={e => atualizar('padrao', e.target.value)} className="w-full border border-stone-300 rounded-lg p-2 bg-white text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-600">
-                    {PADROES.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
-                  </select>
+                  <input
+                    list="padroes-lista-manual"
+                    value={form.padrao || ''}
+                    onChange={e => atualizar('padrao', e.target.value)}
+                    placeholder="— não classificado —"
+                    className="w-full border border-stone-300 rounded-lg p-2 bg-white text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-600"
+                  />
+                  <datalist id="padroes-lista-manual">
+                    {padroesDisponiveis.map(p => <option key={p} value={p} />)}
+                  </datalist>
                 </div>
                 <div>
                   <label className="block text-xs font-mono uppercase tracking-wider text-stone-500 mb-1">Dificuldade</label>
@@ -607,19 +562,9 @@ export default function Professor() {
     <Shell>
       <div className="bg-white border-2 border-slate-900 rounded-2xl p-5">
         <div className="flex justify-between items-center mb-3">
-          <button onClick={() => setModo(provaAtual ? 'provas' : 'escolher')} className="text-xs text-stone-400 font-mono underline">◂ voltar</button>
+          <button onClick={() => setModo('escolher')} className="text-xs text-stone-400 font-mono underline">◂ voltar</button>
           <span className="text-xs font-mono text-stone-500 uppercase">Importar prova</span>
         </div>
-
-        {provaAtual && (
-          <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3 mb-4 flex justify-between items-center gap-2">
-            <p className="text-xs text-emerald-700">
-              📋 Adicionando questões à prova <span className="font-bold">{provaAtual.titulo}</span> ({provaAtual.instituto} · {provaAtual.ano})
-            </p>
-            <button onClick={() => setProvaAtual(null)} className="text-xs text-stone-400 underline flex-shrink-0">remover</button>
-          </div>
-        )}
-
         <p className="text-sm text-stone-600 mb-4">Cole o texto da prova <span className="text-stone-400">ou</span> envie uma foto/imagem.</p>
 
         <div className="space-y-4">
@@ -679,12 +624,6 @@ export default function Professor() {
               <span className="text-xs font-mono text-stone-500">{questoesLote.length} questões extraídas</span>
             </div>
 
-            {provaAtual && (
-              <p className="text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2 mt-3">
-                📋 Estas questões serão vinculadas à prova <span className="font-bold">{provaAtual.titulo}</span> ({provaAtual.instituto} · {provaAtual.ano})
-              </p>
-            )}
-
             {gabarito && (
               <div className="mt-3">
                 <button onClick={aplicarGabarito} className="text-xs bg-amber-100 text-amber-800 border border-amber-300 font-mono px-3 py-1 rounded-lg">
@@ -711,7 +650,7 @@ export default function Professor() {
               onChange={atualizarLote}
               onClassificar={classificarComIA}
               classificando={classificando}
-              provas={provas}
+              padroesDisponiveis={padroesDisponiveis}
             />
           )}
 
@@ -770,7 +709,6 @@ export default function Professor() {
           idx={0}
           total={1}
           onChange={(_, campo, valor) => setQuestaoEditando(q => ({ ...q, [campo]: valor }))}
-          provas={provas}
           onClassificar={async () => {
             setClassificando(0);
             try {
@@ -778,11 +716,21 @@ export default function Professor() {
               const opcoes = letras.map(l => questaoEditando[`opcao${l}`]).filter(Boolean);
               const res = await fetch('/api/classificar', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enunciado: questaoEditando.enunciado, opcoes, disciplina: questaoEditando.disciplina, assunto: questaoEditando.assunto }) });
               const data = await res.json();
-              setQuestaoEditando(q => ({ ...q, padrao: data.padrao || q.padrao, dificuldade: data.dificuldade || q.dificuldade, dicaIA: data.justificativa }));
+              setQuestaoEditando(q => ({
+                ...q,
+                padrao: data.padrao || q.padrao,
+                assunto: q.assunto?.trim() ? q.assunto : (data.assunto || q.assunto),
+                dificuldade: data.dificuldade || q.dificuldade,
+                dicaIA: data.justificativa,
+              }));
+              if (data.padrao_novo && data.padrao && !padroesDisponiveis.includes(data.padrao)) {
+                setPadroesDisponiveis(prev => [...prev, data.padrao].sort());
+              }
             } catch(e) { setErro(e.message); }
             setClassificando(null);
           }}
           classificando={classificando}
+          padroesDisponiveis={padroesDisponiveis}
         />
 
         {erro && <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-xs text-red-700">{erro}</div>}
@@ -790,75 +738,6 @@ export default function Professor() {
 
         <button onClick={salvarEdicao} disabled={salvando} className="w-full bg-emerald-700 text-white font-mono uppercase tracking-wider text-sm font-bold py-3 rounded-lg disabled:bg-stone-300 transition">
           {salvando ? 'Salvando...' : 'Salvar alterações ▸'}
-        </button>
-      </div>
-    </Shell>
-  );
-
-  // Tela: lista de provas
-  if (modo === 'provas') return (
-    <Shell>
-      <div className="bg-white border-2 border-slate-900 rounded-2xl p-5">
-        <div className="flex justify-between items-center mb-4">
-          <button onClick={() => setModo('escolher')} className="text-xs text-stone-400 font-mono underline">◂ voltar</button>
-          <span className="text-xs font-mono text-stone-500 uppercase">Provas</span>
-        </div>
-
-        {sucesso && <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3 mb-4 text-xs text-emerald-700">{sucesso}</div>}
-
-        <button onClick={() => { setModo('nova-prova'); setErro(''); setNovaProva({ titulo: '', instituto: '', ano: '', disciplina: '' }); }} className="w-full text-left border-2 border-slate-900 rounded-xl p-4 hover:bg-stone-50 transition mb-3">
-          <p className="font-mono font-bold text-sm text-slate-900">+ Nova prova</p>
-          <p className="text-xs text-stone-500 mt-1">Cadastre uma prova oficial (ex: IFBA 2024) e importe as questões dela</p>
-        </button>
-
-        {buscandoProvas ? (
-          <p className="text-sm text-stone-400">Carregando...</p>
-        ) : provas.length === 0 ? (
-          <p className="text-sm text-stone-400">Nenhuma prova cadastrada ainda.</p>
-        ) : (
-          <div className="space-y-2 max-h-[55vh] overflow-y-auto">
-            {provas.map(p => (
-              <button
-                key={p.id}
-                onClick={() => {
-                  setProvaAtual(p);
-                  setErro(''); setSucesso('');
-                  setTextoProva(''); setArquivoImagem(null); setGabarito('');
-                  setModo('texto');
-                }}
-                className="w-full text-left border border-stone-200 rounded-xl p-3 hover:bg-stone-50 transition"
-              >
-                <p className="text-sm font-bold text-slate-900">{p.titulo}</p>
-                <p className="text-xs font-mono text-stone-400 mt-1">
-                  {p.instituto} · {p.ano} · {p.disciplina} · {p.total_questoes} questõe{p.total_questoes === 1 ? '' : 's'}
-                </p>
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
-    </Shell>
-  );
-
-  // Tela: cadastrar nova prova
-  if (modo === 'nova-prova') return (
-    <Shell>
-      <div className="bg-white border-2 border-slate-900 rounded-2xl p-5">
-        <div className="flex justify-between items-center mb-4">
-          <button onClick={() => setModo('provas')} className="text-xs text-stone-400 font-mono underline">◂ voltar</button>
-          <span className="text-xs font-mono text-stone-500 uppercase">Nova prova</span>
-        </div>
-        <div className="space-y-3">
-          <Campo label="Título" valor={novaProva.titulo} onChange={e => setNovaProva(p => ({ ...p, titulo: e.target.value }))} placeholder="Ex: IFBA 2024" />
-          <div className="grid grid-cols-2 gap-3">
-            <Campo label="Instituto" valor={novaProva.instituto} onChange={e => setNovaProva(p => ({ ...p, instituto: e.target.value }))} placeholder="Ex: IFBA" />
-            <Campo label="Ano" type="number" valor={novaProva.ano} onChange={e => setNovaProva(p => ({ ...p, ano: e.target.value }))} placeholder="Ex: 2024" />
-          </div>
-          <Campo label="Disciplina" valor={novaProva.disciplina} onChange={e => setNovaProva(p => ({ ...p, disciplina: e.target.value }))} placeholder="Ex: Matemática" />
-        </div>
-        {erro && <div className="bg-red-50 border border-red-200 rounded-lg p-3 mt-4 text-xs text-red-700">{erro}</div>}
-        <button onClick={criarProva} disabled={salvando} className="w-full mt-4 bg-emerald-700 text-white font-mono uppercase tracking-wider text-sm font-bold py-3 rounded-lg disabled:bg-stone-300 transition">
-          {salvando ? 'Criando...' : 'Criar e importar questões ▸'}
         </button>
       </div>
     </Shell>
