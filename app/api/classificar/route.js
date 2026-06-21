@@ -77,7 +77,23 @@ Responda APENAS com este JSON, em uma única linha, sem markdown, sem quebras de
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           contents: [{ parts: [{ text: SYSTEM + '\n\n' + userMsg }] }],
-          generationConfig: { maxOutputTokens: 1024, temperature: 0.1 },
+          generationConfig: {
+            maxOutputTokens: 1024,
+            temperature: 0.1,
+            responseMimeType: 'application/json',
+            responseSchema: {
+              type: 'OBJECT',
+              properties: {
+                assunto: { type: 'STRING' },
+                padrao: { type: 'STRING' },
+                padrao_novo: { type: 'BOOLEAN' },
+                padrao_descricao: { type: 'STRING' },
+                dificuldade: { type: 'STRING' },
+                justificativa: { type: 'STRING' },
+              },
+              required: ['padrao', 'dificuldade', 'justificativa'],
+            },
+          },
         }),
       }
     );
