@@ -100,7 +100,11 @@ export async function POST(request) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           contents: [{ parts }],
-          generationConfig: { maxOutputTokens: 32000, temperature: 0.1 },
+          generationConfig: {
+            maxOutputTokens: 32000,
+            temperature: 0.1,
+            responseMimeType: 'application/json',
+          },
         }),
       }
     );
