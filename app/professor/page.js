@@ -33,7 +33,7 @@ function Shell({ children }) {
 }
 
 // Componente de campo isolado para evitar bug de foco
-function Campo({ label, valor, onChange, placeholder, textarea, type }) {
+function Campo({ label, valor, onChange, placeholder, textarea, type, rows }) {
   return (
     <div>
       <label className="block text-xs font-mono uppercase tracking-wider text-stone-500 mb-1">{label}</label>
@@ -42,8 +42,8 @@ function Campo({ label, valor, onChange, placeholder, textarea, type }) {
           value={valor}
           onChange={onChange}
           placeholder={placeholder}
-          rows={3}
-          className="w-full border border-stone-300 rounded-lg p-2.5 bg-stone-50 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-600 focus:border-emerald-600 resize-none"
+          rows={rows || 3}
+          className="w-full border border-stone-300 rounded-lg p-2.5 bg-stone-50 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-600 focus:border-emerald-600 resize-y"
         />
       ) : (
         <input
@@ -82,7 +82,7 @@ function FormQuestao({ q, idx, total, onChange, onClassificar, classificando, pa
         <Campo label="Disciplina" valor={q.disciplina} onChange={e => onChange(idx, 'disciplina', e.target.value)} placeholder="Ex: Matemática" />
         <Campo label="Assunto" valor={q.assunto} onChange={e => onChange(idx, 'assunto', e.target.value)} placeholder="Ex: Frações" />
       </div>
-      <Campo label="Enunciado" textarea valor={q.enunciado} onChange={e => onChange(idx, 'enunciado', e.target.value)} placeholder="Enunciado da questão" />
+      <Campo label="Enunciado" textarea rows={8} valor={q.enunciado} onChange={e => onChange(idx, 'enunciado', e.target.value)} placeholder="Enunciado da questão (inclui texto de apoio, se houver)" />
 
       <div>
         <label className="block text-xs font-mono uppercase tracking-wider text-stone-500 mb-1">Alternativas</label>
