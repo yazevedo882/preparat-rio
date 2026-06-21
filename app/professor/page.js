@@ -260,7 +260,11 @@ export default function Professor() {
     setErro('');
     try {
       let res;
-      if (arquivoImagem) {
+      if (arquivoPdf) {
+        const fd = new FormData();
+        fd.append('pdf', arquivoPdf);
+        res = await fetch('/api/extrair', { method: 'POST', body: fd });
+      } else if (arquivoImagem) {
         const fd = new FormData();
         fd.append('imagem', arquivoImagem);
         res = await fetch('/api/extrair', { method: 'POST', body: fd });
@@ -271,7 +275,7 @@ export default function Professor() {
           body: JSON.stringify({ texto: textoProva }),
         });
       } else {
-        setErro('Cole o texto da prova ou envie uma imagem/foto.');
+        setErro('Cole o texto da prova, envie um PDF ou uma imagem/foto.');
         setExtraindo(false);
         return;
       }
@@ -449,9 +453,9 @@ export default function Professor() {
             <p className="font-mono font-bold text-sm text-slate-900">✏️ Manual</p>
             <p className="text-xs text-stone-500 mt-1">Digita uma questão por vez com sugestão de IA</p>
           </button>
-          <button onClick={() => { setModo('texto'); setErro(''); setSucesso(''); setTextoProva(''); setArquivoImagem(null); }} className="w-full text-left border-2 border-slate-900 rounded-xl p-4 hover:bg-stone-50 transition">
-            <p className="font-mono font-bold text-sm text-slate-900">📄 Texto ou foto da prova</p>
-            <p className="text-xs text-stone-500 mt-1">Cola o texto ou manda uma foto — a IA extrai todas as questões</p>
+          <button onClick={() => { setModo('texto'); setErro(''); setSucesso(''); setTextoProva(''); setArquivoImagem(null); setArquivoPdf(null); }} className="w-full text-left border-2 border-slate-900 rounded-xl p-4 hover:bg-stone-50 transition">
+            <p className="font-mono font-bold text-sm text-slate-900">📄 PDF, foto ou texto da prova</p>
+            <p className="text-xs text-stone-500 mt-1">Envia o PDF, uma foto ou cola o texto — a IA extrai todas as questões</p>
           </button>
           <button onClick={() => { setModo('editar'); setErro(''); setSucesso(''); buscarQuestoesSalvas(); }} className="w-full text-left border-2 border-slate-900 rounded-xl p-4 hover:bg-stone-50 transition">
             <p className="font-mono font-bold text-sm text-slate-900">✏️ Editar questão salva</p>
@@ -565,12 +569,24 @@ export default function Professor() {
           <button onClick={() => setModo('escolher')} className="text-xs text-stone-400 font-mono underline">◂ voltar</button>
           <span className="text-xs font-mono text-stone-500 uppercase">Importar prova</span>
         </div>
-        <p className="text-sm text-stone-600 mb-4">Cole o texto da prova <span className="text-stone-400">ou</span> envie uma foto/imagem.</p>
+        <p className="text-sm text-stone-600 mb-4">Envie o PDF da prova, uma foto/imagem, <span className="text-stone-400">ou</span> cole o texto.</p>
 
         <div className="space-y-4">
           <div>
+            <label className="block text-xs font-mono uppercase tracking-wider text-stone-500 mb-1">PDF da prova</label>
+            <input type="file" accept="application/pdf" onChange={e => { const f = e.target.files?.[0]||null; setArquivoPdf(f); if(f) { setTextoProva(''); setArquivoImagem(null); } }} className="w-full text-sm text-stone-600 border border-stone-300 rounded-lg p-2 bg-stone-50" />
+            <p className="text-xs text-stone-400 mt-1">Limite de aprox. 4MB. Provas muito grandes: divida em partes ou use foto.</p>
+          </div>
+
+          <div className="flex items-center gap-3">
+            <div className="flex-1 h-px bg-stone-200" />
+            <span className="text-xs text-stone-400 font-mono">ou</span>
+            <div className="flex-1 h-px bg-stone-200" />
+          </div>
+
+          <div>
             <label className="block text-xs font-mono uppercase tracking-wider text-stone-500 mb-1">Foto ou imagem da prova</label>
-            <input type="file" accept="image/*" onChange={e => { setArquivoImagem(e.target.files?.[0]||null); if(e.target.files?.[0]) setTextoProva(''); }} className="w-full text-sm text-stone-600 border border-stone-300 rounded-lg p-2 bg-stone-50" />
+            <input type="file" accept="image/*" onChange={e => { const f = e.target.files?.[0]||null; setArquivoImagem(f); if(f) { setTextoProva(''); setArquivoPdf(null); } }} className="w-full text-sm text-stone-600 border border-stone-300 rounded-lg p-2 bg-stone-50" />
           </div>
 
           <div className="flex items-center gap-3">
@@ -583,7 +599,7 @@ export default function Professor() {
             <label className="block text-xs font-mono uppercase tracking-wider text-stone-500 mb-1">Texto da prova</label>
             <textarea
               value={textoProva}
-              onChange={e => { setTextoProva(e.target.value); if(e.target.value) setArquivoImagem(null); }}
+              onChange={e => { setTextoProva(e.target.value); if(e.target.value) { setArquivoImagem(null); setArquivoPdf(null); } }}
               placeholder="Cole aqui o texto completo da prova..."
               rows={8}
               className="w-full border border-stone-300 rounded-lg p-2.5 bg-stone-50 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-600 resize-none"
