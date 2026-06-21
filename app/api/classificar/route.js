@@ -1,21 +1,9 @@
-const PADROES = {
-  contexto_cotidiano: { label: 'Contextualização cotidiana', exemplo: 'Uma fábrica produziu 1.248 peças e distribuiu em 8 caixas. Quantas peças por caixa?' },
-  leitura_grafico: { label: 'Leitura de gráfico/tabela', exemplo: 'De acordo com o gráfico abaixo, em qual ano houve maior crescimento?' },
-  julgamento_itens: { label: 'Julgamento de itens (I, II, III)', exemplo: 'Analise as afirmativas: I) ... II) ... III) ... Estão corretas apenas:' },
-  texto_apoio: { label: 'Texto de apoio + interpretação', exemplo: 'Leia o texto a seguir e responda: o autor defende que...' },
-  classificacao_comparacao: { label: 'Classificação / comparação', exemplo: 'Assinale a alternativa que classifica corretamente os seres vivos abaixo em seus reinos.' },
-  teoria_aplicacao: { label: 'Teoria + aplicação direta', exemplo: 'A palavra "Apesar" estabelece relação de:' },
-};
+import { createClient } from '@supabase/supabase-js';
 
-const SYSTEM = `Você é um classificador de questões de vestibular de Instituto Federal.
-Retorne APENAS um JSON válido (sem markdown, sem texto antes ou depois):
-{ "padrao": "...", "dificuldade": "Fácil"|"Médio"|"Difícil", "justificativa": "frase curta de até 15 palavras" }
-
-PADRÕES:
-${Object.entries(PADROES).map(([k, v]) => `"${k}" — ${v.label}\n  Ex: ${v.exemplo}`).join('\n')}
-
-DIFICULDADE: Fácil=direto, Médio=2-3 passos, Difícil=múltiplos conceitos.
-A justificativa deve ser curta e direta, sem aspas internas, para garantir um JSON válido.`;
+const supabaseAdmin = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+);
 
 function tentarExtrairJSON(texto) {
   let limpo = texto.replace(/```json/gi, '').replace(/```/g, '').trim();
@@ -28,15 +16,18 @@ function tentarExtrairJSON(texto) {
       try {
         return JSON.parse(limpo.slice(inicio, fim + 1));
       } catch (e2) {
-        // Última tentativa: extrair campos com regex, tolerante a JSON quebrado
         const padraoMatch = limpo.match(/"padrao"\s*:\s*"([^"]*)"/);
+        const assuntoMatch = limpo.match(/"assunto"\s*:\s*"([^"]*)"/);
         const dificuldadeMatch = limpo.match(/"dificuldade"\s*:\s*"([^"]*)"/);
         const justMatch = limpo.match(/"justificativa"\s*:\s*"([^"]*)/);
+        const novoMatch = limpo.match(/"padrao_novo"\s*:\s*(true|false)/);
         if (padraoMatch || dificuldadeMatch) {
           return {
             padrao: padraoMatch?.[1] || '',
+            assunto: assuntoMatch?.[1] || '',
             dificuldade: dificuldadeMatch?.[1] || '',
             justificativa: justMatch?.[1] || '',
+            padrao_novo: novoMatch?.[1] === 'true',
           };
         }
         throw new Error('JSON malformado: ' + e2.message);
@@ -52,10 +43,40 @@ export async function POST(request) {
     if (!enunciado) return Response.json({ error: 'enunciado obrigatório' }, { status: 400 });
 
     if (!process.env.GEMINI_API_KEY) {
-      return Response.json({ padrao: '', dificuldade: '', justificativa: 'IA não configurada.' });
+      return Response.json({ padrao: '', assunto: '', dificuldade: '', justificativa: 'IA não configurada.' });
     }
 
-    const userMsg = `Disciplina: ${disciplina || '—'}\nAssunto: ${assunto || '—'}\nEnunciado: ${enunciado}\nAlternativas: ${Array.isArray(opcoes) ? opcoes.map((o, i) => `${String.fromCharCode(65+i)}) ${o}`).join(' | ') : opcoes}`;
+    // Busca os padrões já existentes no banco — biblioteca compartilhada entre todos os institutos
+    const { data: padroesExistentes } = await supabaseAdmin
+      .from('padroes')
+      .select('nome, descricao, exemplo')
+      .order('nome');
+
+    const listaPadroes = (padroesExistentes || [])
+      .map(p => `"${p.nome}" — ${p.descricao || ''}${p.exemplo ? `\n  Ex: ${p.exemplo}` : ''}`)
+      .join('\n');
+
+    const SYSTEM = `Você é um classificador de questões de vestibular de Instituto Federal.
+
+Sua tarefa tem 3 partes:
+1. Sugerir o ASSUNTO da questão (ex: "Frações", "Interpretação textual", "Conjunções") com base na disciplina e no enunciado.
+2. Classificar a questão em um PADRÃO. Você tem uma lista de padrões já usados — tente encaixar a questão em um deles. Só crie um padrão novo se a questão realmente não se encaixar em nenhum dos existentes.
+3. Classificar a DIFICULDADE: "Fácil" (resposta direta), "Médio" (2-3 passos de raciocínio), "Difícil" (múltiplos conceitos ou abstração).
+
+PADRÕES JÁ EXISTENTES NO BANCO:
+${listaPadroes || '(nenhum ainda — você pode criar o primeiro)'}
+
+Retorne APENAS um JSON válido (sem markdown, sem texto antes ou depois):
+{
+  "assunto": "assunto sugerido, curto",
+  "padrao": "nome exato de um padrão da lista acima, OU um nome novo se necessário",
+  "padrao_novo": true ou false (true só se o padrão não estava na lista acima),
+  "padrao_descricao": "se padrao_novo=true, uma descrição curta do novo padrão; senão, string vazia",
+  "dificuldade": "Fácil" ou "Médio" ou "Difícil",
+  "justificativa": "frase curta de até 15 palavras, sem aspas internas"
+}`;
+
+    const userMsg = `Disciplina: ${disciplina || '—'}\nAssunto informado pelo professor: ${assunto || '(não informado, sugira um)'}\nEnunciado: ${enunciado}\nAlternativas: ${Array.isArray(opcoes) ? opcoes.map((o, i) => `${String.fromCharCode(65+i)}) ${o}`).join(' | ') : opcoes}`;
 
     const res = await fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
@@ -64,7 +85,7 @@ export async function POST(request) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           contents: [{ parts: [{ text: SYSTEM + '\n\n' + userMsg }] }],
-          generationConfig: { maxOutputTokens: 1024, temperature: 0.1 },
+          generationConfig: { maxOutputTokens: 1024, temperature: 0.2 },
         }),
       }
     );
@@ -86,6 +107,19 @@ export async function POST(request) {
       resultado = tentarExtrairJSON(texto);
     } catch (parseError) {
       return Response.json({ error: 'Não foi possível interpretar a resposta da IA: ' + parseError.message, debug: texto.slice(0, 300) }, { status: 500 });
+    }
+
+    // Se a IA decidiu criar um padrão novo, salva na biblioteca para uso futuro
+    if (resultado.padrao_novo && resultado.padrao) {
+      await supabaseAdmin
+        .from('padroes')
+        .insert({
+          nome: resultado.padrao,
+          descricao: resultado.padrao_descricao || '',
+          exemplo: enunciado.slice(0, 300),
+        })
+        .select()
+        .then(() => {}, () => {}); // ignora erro de duplicado (nome único)
     }
 
     return Response.json(resultado);
