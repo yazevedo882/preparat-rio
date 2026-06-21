@@ -233,6 +233,7 @@ export default function Professor() {
         setForm(f => ({
           ...f,
           padrao: data.padrao || f.padrao,
+          disciplina: f.disciplina?.trim() ? f.disciplina : (data.disciplina || f.disciplina),
           assunto: f.assunto?.trim() ? f.assunto : (data.assunto || f.assunto),
           dificuldade: data.dificuldade || f.dificuldade,
           dicaIA: data.justificativa,
@@ -241,6 +242,7 @@ export default function Professor() {
         setQuestoesLote(qs => qs.map((item, i) => i === idx ? {
           ...item,
           padrao: data.padrao || item.padrao,
+          disciplina: item.disciplina?.trim() ? item.disciplina : (data.disciplina || item.disciplina),
           assunto: item.assunto?.trim() ? item.assunto : (data.assunto || item.assunto),
           dificuldade: data.dificuldade || item.dificuldade,
           dicaIA: data.justificativa,
@@ -735,6 +737,7 @@ export default function Professor() {
               setQuestaoEditando(q => ({
                 ...q,
                 padrao: data.padrao || q.padrao,
+                disciplina: q.disciplina?.trim() ? q.disciplina : (data.disciplina || q.disciplina),
                 assunto: q.assunto?.trim() ? q.assunto : (data.assunto || q.assunto),
                 dificuldade: data.dificuldade || q.dificuldade,
                 dicaIA: data.justificativa,
