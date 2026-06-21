@@ -57,8 +57,19 @@ export async function POST(request) {
     if (contentType.includes('multipart/form-data')) {
       const formData = await request.formData();
       const imagem = formData.get('imagem');
+      const pdf = formData.get('pdf');
 
-      if (imagem && imagem.size > 0) {
+      if (pdf && pdf.size > 0) {
+        if (pdf.size > 4_000_000) {
+          return Response.json({ error: 'O PDF é muito grande (limite ~4MB). Tente exportar com menor resolução ou dividir em partes.' }, { status: 400 });
+        }
+        const bytes = await pdf.arrayBuffer();
+        const base64 = Buffer.from(bytes).toString('base64');
+        parts = [
+          { inline_data: { mime_type: 'application/pdf', data: base64 } },
+          { text: SYSTEM_PROMPT },
+        ];
+      } else if (imagem && imagem.size > 0) {
         const bytes = await imagem.arrayBuffer();
         const base64 = Buffer.from(bytes).toString('base64');
         const mediaType = imagem.type || 'image/jpeg';
@@ -69,7 +80,7 @@ export async function POST(request) {
       } else {
         textoOriginal = formData.get('texto') || '';
         if (!textoOriginal.trim()) {
-          return Response.json({ error: 'Nenhum texto ou imagem foi enviado.' }, { status: 400 });
+          return Response.json({ error: 'Nenhum texto, imagem ou PDF foi enviado.' }, { status: 400 });
         }
         parts = [{ text: SYSTEM_PROMPT + '\n\nTexto da prova:\n' + textoOriginal }];
       }
