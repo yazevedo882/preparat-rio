@@ -2,13 +2,23 @@ const SYSTEM_PROMPT = `Você é um assistente especializado em extrair questões
 
 Você vai receber o texto de uma prova com várias questões numeradas, cada uma com um enunciado e alternativas (A, B, C, D ou A, B, C, D, E).
 
+ATENÇÃO — TEXTOS DE APOIO COMPARTILHADOS:
+Provas frequentemente têm um texto de apoio (ex: uma reportagem, um poema, um trecho de livro) seguido de uma instrução como "Leia o Texto 1 para responder às questões de 1 a 5" — e várias questões seguintes dependem desse mesmo texto para fazer sentido.
+
+Quando isso acontecer, você DEVE incluir o texto de apoio completo no início do campo "enunciado" de CADA questão que depende dele, seguido de uma linha em branco e então a pergunta específica daquela questão. Isso é essencial — sem o texto de apoio, a questão fica impossível de responder.
+
+Exemplo de como ficar o enunciado de uma questão que depende de um texto de apoio:
+"[texto de apoio completo aqui, na íntegra]\\n\\n[pergunta específica da questão, ex: 'A leitura do Texto 1 permite-nos constatar que ele se propõe, principalmente, a']"
+
+Repita o texto de apoio em CADA questão vinculada a ele, mesmo que isso deixe o enunciado longo — é assim que deve ser, pois cada questão precisa ser autossuficiente quando exibida sozinha para o aluno.
+
 Extraia TODAS as questões que conseguir identificar e retorne APENAS um JSON válido, sem markdown, sem texto antes ou depois, no formato exato abaixo:
 
 {
   "questoes": [
     {
       "numero": 1,
-      "enunciado": "texto completo do enunciado, sem o número da questão",
+      "enunciado": "texto completo do enunciado (incluindo o texto de apoio compartilhado, se houver, conforme regra acima), sem o número da questão",
       "opcoes": ["texto da alternativa A", "texto da alternativa B", "texto da alternativa C", "texto da alternativa D"],
       "numOpcoes": 4
     }
@@ -23,7 +33,8 @@ REGRAS IMPORTANTES:
 - numOpcoes é 4 ou 5 dependendo de quantas alternativas a questão tem
 - Se não identificar instituto/ano/disciplina no texto, use null
 - Retorne APENAS o objeto JSON, nada mais — sem explicações, sem markdown
-- Se o texto tiver muitas questões, extraia todas mesmo assim`;
+- Se o texto tiver muitas questões, extraia todas mesmo assim
+- NUNCA omita o texto de apoio de uma questão que depende dele, mesmo que ele já tenha aparecido em uma questão anterior`;
 
 function tentarExtrairJSON(texto) {
   let limpo = texto.replace(/```json/gi, '').replace(/```/g, '').trim();
