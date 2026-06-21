@@ -5,7 +5,7 @@ const supabaseAdmin = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
 );
 
-// Parsing tolerante: tenta JSON normal, depois corta sobras, depois extrai campo por campo com regex
+// Parsing tolerante: tenta JSON normal, depois corta sobras, depois extrai campo por campo
 function tentarExtrairJSON(texto) {
   let limpo = texto.replace(/```json/gi, '').replace(/```/g, '').trim();
 
@@ -18,21 +18,21 @@ function tentarExtrairJSON(texto) {
       try {
         return JSON.parse(limpo.slice(inicio, fim + 1));
       } catch (e2) {
-        // Fallback final: extrai campo por campo via regex, tolerante a aspas internas quebradas
         const extrairCampo = (nome) => {
           const re = new RegExp(`"${nome}"\\s*:\\s*"([^"]*(?:\\\\.[^"]*)*)"`, 'i');
           const m = limpo.match(re);
           return m ? m[1] : '';
         };
-        const padrao = extrairCampo('padrao');
+        const disciplina = extrairCampo('disciplina');
         const assunto = extrairCampo('assunto');
+        const padrao = extrairCampo('padrao');
         const dificuldade = extrairCampo('dificuldade');
         const justificativa = extrairCampo('justificativa');
         const padraoDescricao = extrairCampo('padrao_descricao');
         const padrao_novo = /"padrao_novo"\s*:\s*true/i.test(limpo);
 
         if (padrao || dificuldade) {
-          return { padrao, assunto, dificuldade, justificativa, padrao_novo, padrao_descricao: padraoDescricao };
+          return { disciplina, assunto, padrao, dificuldade, justificativa, padrao_novo, padrao_descricao: padraoDescricao };
         }
         throw new Error('Não foi possível extrair nenhum campo reconhecível.');
       }
@@ -47,7 +47,7 @@ export async function POST(request) {
     if (!enunciado) return Response.json({ error: 'enunciado obrigatório' }, { status: 400 });
 
     if (!process.env.GEMINI_API_KEY) {
-      return Response.json({ padrao: '', assunto: '', dificuldade: '', justificativa: 'IA não configurada.' });
+      return Response.json({ disciplina: '', assunto: '', padrao: '', dificuldade: '', justificativa: 'IA não configurada.', correta: '' });
     }
 
     // Busca padrões já existentes — biblioteca compartilhada entre institutos
@@ -59,16 +59,19 @@ export async function POST(request) {
 
     const listaPadroes = (padroesExistentes || []).map(p => p.nome).join(', ');
 
-    // Prompt mais simples e direto, pedindo explicitamente para evitar aspas internas
-    const SYSTEM = `Classifique esta questão de vestibular de Instituto Federal.
+    const SYSTEM = `Você é um especialista em questões de vestibular de Institutos Federais do Brasil.
 
-Padrões já existentes (prefira reutilizar um destes): ${listaPadroes || '(nenhum ainda)'}
+Analise a questão abaixo e determine:
+1. DISCIPLINA — a matéria escolar (ex: Matemática, Língua Portuguesa, Biologia, Física, História). Só sugira se não foi informada.
+2. ASSUNTO — o tema específico dentro da disciplina (ex: "Frações", "Interpretação textual", "Genética").
+3. PADRÃO — o tipo/formato da questão. Prefira reutilizar um destes já existentes: ${listaPadroes || '(nenhum ainda, pode criar o primeiro)'}. Só crie um novo nome se a questão realmente não se encaixar em nenhum.
+4. DIFICULDADE — "Fácil" (resposta direta), "Médio" (2-3 passos de raciocínio) ou "Difícil" (múltiplos conceitos / alta abstração).
 
 Responda APENAS com este JSON, em uma única linha, sem markdown, sem quebras de linha dentro dos valores, e NUNCA use aspas duplas dentro dos textos (use aspas simples se precisar citar algo):
 
-{"assunto":"assunto curto sugerido","padrao":"nome do padrão (existente ou novo)","padrao_novo":true ou false,"padrao_descricao":"descrição curta se for novo, senão vazio","dificuldade":"Fácil ou Médio ou Difícil","justificativa":"frase curta de até 12 palavras"}`;
+{"disciplina":"disciplina sugerida ou vazio se já informada","assunto":"assunto curto sugerido","padrao":"nome do padrão","padrao_novo":true ou false,"padrao_descricao":"descrição curta se for novo, senão vazio","dificuldade":"Fácil ou Médio ou Difícil","justificativa":"frase curta de até 15 palavras explicando a classificação"}`;
 
-    const userMsg = `Disciplina: ${disciplina || '—'}\nAssunto informado: ${assunto || '(sugira um)'}\nEnunciado: ${enunciado}\nAlternativas: ${Array.isArray(opcoes) ? opcoes.map((o, i) => `${String.fromCharCode(65+i)}) ${o}`).join(' | ') : opcoes}`;
+    const userMsg = `Disciplina informada: ${disciplina || '(não informada, sugira)'}\nAssunto informado: ${assunto || '(não informado, sugira)'}\nEnunciado: ${enunciado}\nAlternativas: ${Array.isArray(opcoes) ? opcoes.map((o, i) => `${letras[i]}) ${o}`).join(' | ') : opcoes}`;
 
     const res = await fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
@@ -84,6 +87,7 @@ Responda APENAS com este JSON, em uma única linha, sem markdown, sem quebras de
             responseSchema: {
               type: 'OBJECT',
               properties: {
+                disciplina: { type: 'STRING' },
                 assunto: { type: 'STRING' },
                 padrao: { type: 'STRING' },
                 padrao_novo: { type: 'BOOLEAN' },
