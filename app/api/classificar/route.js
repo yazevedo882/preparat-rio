@@ -46,7 +46,7 @@ export async function POST(request) {
     const { enunciado, opcoes, disciplina, assunto } = await request.json();
     if (!enunciado) return Response.json({ error: 'enunciado obrigatório' }, { status: 400 });
 
-    if (!process.env.GEMINI_API_KEY) {
+    if (!process.env.ANTHROPIC_API_KEY) {
       return Response.json({ disciplina: '', assunto: '', padrao: '', dificuldade: '', justificativa: 'IA não configurada.', correta: '' });
     }
 
@@ -67,49 +67,37 @@ Analise a questão abaixo e determine:
 3. PADRÃO — o tipo/formato da questão. Prefira reutilizar um destes já existentes: ${listaPadroes || '(nenhum ainda, pode criar o primeiro)'}. Só crie um novo nome se a questão realmente não se encaixar em nenhum.
 4. DIFICULDADE — "Fácil" (resposta direta), "Médio" (2-3 passos de raciocínio) ou "Difícil" (múltiplos conceitos / alta abstração).
 
-Responda APENAS com este JSON, em uma única linha, sem markdown, sem quebras de linha dentro dos valores, e NUNCA use aspas duplas dentro dos textos (use aspas simples se precisar citar algo):
-
-{"disciplina":"disciplina sugerida ou vazio se já informada","assunto":"assunto curto sugerido","padrao":"nome do padrão","padrao_novo":true ou false,"padrao_descricao":"descrição curta se for novo, senão vazio","dificuldade":"Fácil ou Médio ou Difícil","justificativa":"frase curta de até 15 palavras explicando a classificação"}`;
+Responda APENAS com JSON válido, sem markdown, sem texto antes ou depois. Formato exato:
+{"disciplina":"...","assunto":"...","padrao":"...","padrao_novo":true,"padrao_descricao":"...","dificuldade":"Fácil","justificativa":"..."}`;
 
     const letras = ['A', 'B', 'C', 'D', 'E'];
-    const userMsg = `Disciplina informada: ${disciplina || '(não informada, sugira)'}\\nAssunto informado: ${assunto || '(não informado, sugira)'}\\nEnunciado: ${enunciado}\\nAlternativas: ${Array.isArray(opcoes) ? opcoes.map((o, i) => `${letras[i]}) ${o}`).join(' | ') : opcoes}`;
+    const userMsg = `Disciplina informada: ${disciplina || '(não informada, sugira)'}
+Assunto informado: ${assunto || '(não informado, sugira)'}
+Enunciado: ${enunciado}
+Alternativas: ${Array.isArray(opcoes) ? opcoes.map((o, i) => `${letras[i]}) ${o}`).join(' | ') : opcoes}`;
 
-    const res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: SYSTEM + '\n\n' + userMsg }] }],
-          generationConfig: {
-            maxOutputTokens: 1024,
-            temperature: 0.1,
-            responseMimeType: 'application/json',
-            responseSchema: {
-              type: 'OBJECT',
-              properties: {
-                disciplina: { type: 'STRING' },
-                assunto: { type: 'STRING' },
-                padrao: { type: 'STRING' },
-                padrao_novo: { type: 'BOOLEAN' },
-                padrao_descricao: { type: 'STRING' },
-                dificuldade: { type: 'STRING' },
-                justificativa: { type: 'STRING' },
-              },
-              required: ['padrao', 'dificuldade', 'justificativa'],
-            },
-          },
-        }),
-      }
-    );
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': process.env.ANTHROPIC_API_KEY,
+        'anthropic-version': '2023-06-01',
+      },
+      body: JSON.stringify({
+        model: 'claude-haiku-4-5',
+        max_tokens: 512,
+        system: SYSTEM,
+        messages: [{ role: 'user', content: userMsg }],
+      }),
+    });
 
     if (!res.ok) {
       const errBody = await res.text();
-      return Response.json({ error: `Erro na API do Gemini (status ${res.status}): ${errBody.slice(0, 300)}` }, { status: 500 });
+      return Response.json({ error: `Erro na API da Anthropic (status ${res.status}): ${errBody.slice(0, 300)}` }, { status: 500 });
     }
 
     const data = await res.json();
-    const texto = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+    const texto = data?.content?.[0]?.text;
 
     if (!texto) {
       return Response.json({ error: 'A IA não retornou conteúdo.', debug: JSON.stringify(data).slice(0, 400) }, { status: 500 });
