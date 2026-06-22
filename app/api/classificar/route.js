@@ -71,7 +71,8 @@ Responda APENAS com este JSON, em uma única linha, sem markdown, sem quebras de
 
 {"disciplina":"disciplina sugerida ou vazio se já informada","assunto":"assunto curto sugerido","padrao":"nome do padrão","padrao_novo":true ou false,"padrao_descricao":"descrição curta se for novo, senão vazio","dificuldade":"Fácil ou Médio ou Difícil","justificativa":"frase curta de até 15 palavras explicando a classificação"}`;
 
-    const userMsg = `Disciplina informada: ${disciplina || '(não informada, sugira)'}\nAssunto informado: ${assunto || '(não informado, sugira)'}\nEnunciado: ${enunciado}\nAlternativas: ${Array.isArray(opcoes) ? opcoes.map((o, i) => `${letras[i]}) ${o}`).join(' | ') : opcoes}`;
+    const letras = ['A', 'B', 'C', 'D', 'E'];
+    const userMsg = `Disciplina informada: ${disciplina || '(não informada, sugira)'}\\nAssunto informado: ${assunto || '(não informado, sugira)'}\\nEnunciado: ${enunciado}\\nAlternativas: ${Array.isArray(opcoes) ? opcoes.map((o, i) => `${letras[i]}) ${o}`).join(' | ') : opcoes}`;
 
     const res = await fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
