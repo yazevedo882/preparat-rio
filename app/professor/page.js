@@ -162,6 +162,7 @@ export default function Professor() {
   const [arquivoPdf, setArquivoPdf] = useState(null);
   const [arquivosImagem, setArquivosImagem] = useState([]);  // múltiplas fotos
   const [extraindo, setExtraindo] = useState(false);
+  const [etapaExtracao, setEtapaExtracao] = useState('');
 
   // Revisão em lote
   const [questoesLote, setQuestoesLote] = useState([]);
@@ -263,14 +264,33 @@ export default function Professor() {
     try {
       let res;
       if (arquivoPdf) {
-        const fd = new FormData();
-        fd.append('pdf', arquivoPdf);
-        res = await fetch('/api/extrair', { method: 'POST', body: fd });
+        setEtapaExtracao('Enviando PDF...');
+        const path = `${Date.now()}-${arquivoPdf.name.replace(/\s+/g, '-')}`;
+        const { error: erroUpload } = await supabase.storage.from('provas-temp').upload(path, arquivoPdf, { contentType: arquivoPdf.type || 'application/pdf' });
+        if (erroUpload) throw new Error(`Falha ao enviar PDF: ${erroUpload.message}`);
+        setEtapaExtracao('Extraindo questões com IA...');
+        res = await fetch('/api/extrair', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ pdfPath: path }),
+        });
       } else if (arquivosImagem.length > 0) {
-        const fd = new FormData();
-        arquivosImagem.forEach(f => fd.append('imagem', f));
-        res = await fetch('/api/extrair', { method: 'POST', body: fd });
+        setEtapaExtracao(`Enviando ${arquivosImagem.length} foto(s)...`);
+        const paths = [];
+        for (const f of arquivosImagem) {
+          const path = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}-${f.name.replace(/\s+/g, '-')}`;
+          const { error: erroUpload } = await supabase.storage.from('provas-temp').upload(path, f, { contentType: f.type || 'image/jpeg' });
+          if (erroUpload) throw new Error(`Falha ao enviar foto (${f.name}): ${erroUpload.message}`);
+          paths.push(path);
+        }
+        setEtapaExtracao('Extraindo questões com IA...');
+        res = await fetch('/api/extrair', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ imagePaths: paths }),
+        });
       } else if (textoProva.trim()) {
+        setEtapaExtracao('Extraindo questões com IA...');
         res = await fetch('/api/extrair', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -306,6 +326,7 @@ export default function Professor() {
       setGabarito('');
       setModo('revisar');
     } catch (e) { setErro('Erro ao extrair: ' + e.message); }
+    setEtapaExtracao('');
     setExtraindo(false);
   }
 
@@ -577,7 +598,7 @@ export default function Professor() {
           <div>
             <label className="block text-xs font-mono uppercase tracking-wider text-stone-500 mb-1">PDF da prova</label>
             <input type="file" accept="application/pdf" onChange={e => { const f = e.target.files?.[0]||null; setArquivoPdf(f); if(f) { setTextoProva(''); setArquivosImagem([]); } }} className="w-full text-sm text-stone-600 border border-stone-300 rounded-lg p-2 bg-stone-50" />
-            <p className="text-xs text-stone-400 mt-1">Limite de aprox. 4MB. Provas muito grandes: divida em partes ou use foto.</p>
+            <p className="text-xs text-stone-400 mt-1">Limite de até 32MB (aprox. 100 páginas). Provas maiores: divida em partes.</p>
           </div>
 
           <div className="flex items-center gap-3">
@@ -625,7 +646,7 @@ export default function Professor() {
         {erro && <div className="bg-red-50 border border-red-200 rounded-lg p-3 mt-4 text-xs text-red-700">{erro}</div>}
 
         <button onClick={extrairQuestoes} disabled={extraindo} className="w-full mt-4 bg-emerald-700 text-white font-mono uppercase tracking-wider text-sm font-bold py-3 rounded-lg disabled:bg-stone-300 transition">
-          {extraindo ? 'Extraindo questões com IA...' : 'Extrair questões ▸'}
+          {extraindo ? (etapaExtracao || 'Extraindo questões com IA...') : 'Extrair questões ▸'}
         </button>
       </div>
     </Shell>
@@ -764,4 +785,4 @@ export default function Professor() {
   );
 
   return null;
-}
+            }
