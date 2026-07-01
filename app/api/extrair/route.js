@@ -1,6 +1,15 @@
+import { createClient } from '@supabase/supabase-js';
+
+const supabaseAdmin = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+);
+
+const BUCKET = 'provas-temp';
+
 const SYSTEM_PROMPT = `Você é um assistente especializado em extrair questões de provas de Institutos Federais do Brasil.
 
-Você vai receber o texto de uma prova com várias questões numeradas, cada uma com um enunciado e alternativas (A, B, C, D ou A, B, C, D, E).
+Você vai receber o conteúdo de uma prova com várias questões numeradas, cada uma com um enunciado e alternativas (A, B, C, D ou A, B, C, D, E). O conteúdo pode vir como texto, um PDF com várias páginas, ou uma ou mais fotos/imagens de páginas da prova — processe TUDO que for enviado, questão por questão, até o fim.
 
 ATENÇÃO — TEXTOS DE APOIO COMPARTILHADOS:
 Provas frequentemente têm um texto de apoio (ex: uma reportagem, um poema, um trecho de livro) seguido de uma instrução como "Leia o Texto 1 para responder às questões de 1 a 5" — e várias questões seguintes dependem desse mesmo texto para fazer sentido.
@@ -12,7 +21,7 @@ Exemplo de como ficar o enunciado de uma questão que depende de um texto de apo
 
 Repita o texto de apoio em CADA questão vinculada a ele, mesmo que isso deixe o enunciado longo — é assim que deve ser, pois cada questão precisa ser autossuficiente quando exibida sozinha para o aluno.
 
-Extraia TODAS as questões que conseguir identificar e retorne APENAS um JSON válido, sem markdown, sem texto antes ou depois, no formato exato abaixo:
+Extraia TODAS as questões que conseguir identificar, de TODAS as páginas/imagens recebidas — não pare nas primeiras. Retorne APENAS um JSON válido, sem markdown, sem texto antes ou depois, no formato exato abaixo:
 
 {
   "questoes": [
@@ -33,8 +42,9 @@ REGRAS IMPORTANTES:
 - numOpcoes é 4 ou 5 dependendo de quantas alternativas a questão tem
 - Se não identificar instituto/ano/disciplina no texto, use null
 - Retorne APENAS o objeto JSON, nada mais — sem explicações, sem markdown
-- Se o texto tiver muitas questões, extraia todas mesmo assim
-- NUNCA omita o texto de apoio de uma questão que depende dele, mesmo que ele já tenha aparecido em uma questão anterior`;
+- Se o texto/prova tiver muitas questões, extraia todas mesmo assim
+- NUNCA omita o texto de apoio de uma questão que depende dele, mesmo que ele já tenha aparecido em uma questão anterior
+- NUNCA pare antes do fim do documento/conjunto de imagens recebido`;
 
 function tentarExtrairJSON(texto) {
   let limpo = texto.replace(/```json/gi, '').replace(/```/g, '').trim();
@@ -55,106 +65,111 @@ function tentarExtrairJSON(texto) {
   }
 }
 
-export async function POST(request) {
+async function baixarComoBase64(path) {
+  const { data, error } = await supabaseAdmin.storage.from(BUCKET).download(path);
+  if (error) throw new Error(`Falha ao baixar arquivo do Storage (${path}): ${error.message}`);
+  const buffer = Buffer.from(await data.arrayBuffer());
+  return { base64: buffer.toString('base64'), mimeType: data.type || 'application/octet-stream' };
+}
+
+async function apagarDoStorage(paths) {
   try {
-    if (!process.env.GEMINI_API_KEY) {
-      return Response.json({ error: 'A chave do Gemini (GEMINI_API_KEY) não está configurada no Vercel.' }, { status: 500 });
+    if (paths.length) await supabaseAdmin.storage.from(BUCKET).remove(paths);
+  } catch (e) { /* limpeza best-effort, não falha a request por isso */ }
+}
+
+export async function POST(request) {
+  let pathsParaApagar = [];
+  try {
+    if (!process.env.ANTHROPIC_API_KEY) {
+      return Response.json({ error: 'A chave da Claude (ANTHROPIC_API_KEY) não está configurada no Vercel.' }, { status: 500 });
     }
 
-    const contentType = request.headers.get('content-type') || '';
-    let parts;
-    let textoOriginal = '';
+    const body = await request.json();
+    const { texto, pdfPath, imagePaths } = body;
 
-    if (contentType.includes('multipart/form-data')) {
-      const formData = await request.formData();
-      const imagem = formData.get('imagem');
-      const pdf = formData.get('pdf');
+    const contentBlocks = [];
 
-      if (pdf && pdf.size > 0) {
-        if (pdf.size > 4_000_000) {
-          return Response.json({ error: 'O PDF é muito grande (limite ~4MB). Tente exportar com menor resolução ou dividir em partes.' }, { status: 400 });
-        }
-        const bytes = await pdf.arrayBuffer();
-        const base64 = Buffer.from(bytes).toString('base64');
-        parts = [
-          { inline_data: { mime_type: 'application/pdf', data: base64 } },
-          { text: SYSTEM_PROMPT },
-        ];
-      } else if (imagem && imagem.size > 0) {
-        const bytes = await imagem.arrayBuffer();
-        const base64 = Buffer.from(bytes).toString('base64');
-        const mediaType = imagem.type || 'image/jpeg';
-        parts = [
-          { inline_data: { mime_type: mediaType, data: base64 } },
-          { text: SYSTEM_PROMPT },
-        ];
-      } else {
-        textoOriginal = formData.get('texto') || '';
-        if (!textoOriginal.trim()) {
-          return Response.json({ error: 'Nenhum texto, imagem ou PDF foi enviado.' }, { status: 400 });
-        }
-        parts = [{ text: SYSTEM_PROMPT + '\n\nTexto da prova:\n' + textoOriginal }];
+    if (pdfPath) {
+      pathsParaApagar = [pdfPath];
+      const { base64 } = await baixarComoBase64(pdfPath);
+      contentBlocks.push({
+        type: 'document',
+        source: { type: 'base64', media_type: 'application/pdf', data: base64 },
+      });
+    } else if (Array.isArray(imagePaths) && imagePaths.length > 0) {
+      pathsParaApagar = imagePaths;
+      for (const path of imagePaths) {
+        const { base64, mimeType } = await baixarComoBase64(path);
+        contentBlocks.push({
+          type: 'image',
+          source: { type: 'base64', media_type: mimeType.startsWith('image/') ? mimeType : 'image/jpeg', data: base64 },
+        });
       }
+    } else if (texto && texto.trim()) {
+      contentBlocks.push({ type: 'text', text: 'Texto da prova:\n' + texto });
     } else {
-      const body = await request.json();
-      textoOriginal = body.texto || '';
-      if (!textoOriginal.trim()) {
-        return Response.json({ error: 'Nenhum texto foi enviado.' }, { status: 400 });
-      }
-      parts = [{ text: SYSTEM_PROMPT + '\n\nTexto da prova:\n' + textoOriginal }];
+      return Response.json({ error: 'Nenhum texto, imagem ou PDF foi enviado.' }, { status: 400 });
     }
 
-    const res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{ parts }],
-          generationConfig: {
-            maxOutputTokens: 32000,
-            temperature: 0.1,
-            responseMimeType: 'application/json',
-          },
-        }),
-      }
-    );
+    contentBlocks.push({ type: 'text', text: 'Extraia todas as questões conforme as instruções.' });
+
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': process.env.ANTHROPIC_API_KEY,
+        'anthropic-version': '2023-06-01',
+      },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-6',
+        max_tokens: 16000,
+        system: SYSTEM_PROMPT,
+        messages: [{ role: 'user', content: contentBlocks }],
+      }),
+    });
 
     if (!res.ok) {
       const errBody = await res.text();
-      return Response.json({ error: `Erro na API do Gemini (status ${res.status}): ${errBody.slice(0, 300)}` }, { status: 500 });
+      await apagarDoStorage(pathsParaApagar);
+      return Response.json({ error: `Erro na API da Anthropic (status ${res.status}): ${errBody.slice(0, 300)}` }, { status: 500 });
     }
 
     const data = await res.json();
-    const finishReason = data?.candidates?.[0]?.finishReason;
-    const texto = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+    const stopReason = data?.stop_reason;
+    const texto_resposta = data?.content?.find(b => b.type === 'text')?.text;
 
-    if (!texto) {
+    if (!texto_resposta) {
+      await apagarDoStorage(pathsParaApagar);
       return Response.json({
-        error: 'A IA não retornou conteúdo. Tente colar um trecho menor da prova (ex: 15-20 questões por vez).',
+        error: 'A IA não retornou conteúdo. Tente enviar um trecho menor da prova (ex: 15-20 questões por vez).',
         debug: JSON.stringify(data).slice(0, 500),
       }, { status: 500 });
     }
 
     let resultado;
     try {
-      resultado = tentarExtrairJSON(texto);
+      resultado = tentarExtrairJSON(texto_resposta);
     } catch (parseError) {
-      const avisoCorte = finishReason === 'MAX_TOKENS'
-        ? ' A resposta da IA foi cortada por ser muito longa — tente colar menos questões de uma vez (ex: 15-20 por vez).'
+      const avisoCorte = stopReason === 'max_tokens'
+        ? ' A resposta da IA foi cortada por ser muito longa — tente enviar menos questões de uma vez (ex: 15-20 por vez).'
         : '';
+      await apagarDoStorage(pathsParaApagar);
       return Response.json({
         error: 'Não foi possível interpretar a resposta da IA.' + avisoCorte,
-        debug: texto.slice(0, 500),
+        debug: texto_resposta.slice(0, 500),
       }, { status: 500 });
     }
 
     if (!resultado.questoes || !Array.isArray(resultado.questoes) || resultado.questoes.length === 0) {
-      return Response.json({ error: 'A IA não conseguiu identificar nenhuma questão no texto enviado. Verifique se o texto tem os enunciados e alternativas claros (A, B, C, D).' }, { status: 400 });
+      await apagarDoStorage(pathsParaApagar);
+      return Response.json({ error: 'A IA não conseguiu identificar nenhuma questão no material enviado. Verifique se os enunciados e alternativas (A, B, C, D) estão legíveis.' }, { status: 400 });
     }
 
+    await apagarDoStorage(pathsParaApagar);
     return Response.json(resultado);
   } catch (e) {
+    await apagarDoStorage(pathsParaApagar);
     return Response.json({ error: 'Erro inesperado: ' + e.message }, { status: 500 });
   }
 }
