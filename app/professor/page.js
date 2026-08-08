@@ -416,8 +416,8 @@ export default function Professor() {
         return;
       }
       const data = await res.json();
-if (data.error) throw new Error(data.error + (data.debug ? ' | DEBUG: ' + data.debug : ''));
-if (!data.questoes?.length) throw new Error('Nenhuma questão encontrada.');
+      if (data.error) throw new Error(data.error);
+      if (!data.questoes?.length) throw new Error('Nenhuma questão encontrada.');
 
       // Montar lote com dados extraídos
       const loteBase = data.questoes.map(q => {
@@ -510,6 +510,7 @@ if (!data.questoes?.length) throw new Error('Nenhuma questão encontrada.');
     setSalvandoLote(true); setErro('');
     let salvos = 0;
     let puladas = 0;
+    let primeiroErro = '';
     const idsPorProva = {}; // agrupa questao_id por "instituto|ano"
 
     for (const q of questoesLote) {
@@ -541,7 +542,7 @@ if (!data.questoes?.length) throw new Error('Nenhuma questão encontrada.');
         imagens_urls: imagens_urls.length ? imagens_urls : null,
       }).select('id').single();
 
-      if (error || !inserida) { puladas++; continue; }
+      if (error || !inserida) { puladas++; if (error && !primeiroErro) primeiroErro = error.message; continue; }
       salvos++;
 
       const chave = `${q.instituto.trim()}|${ano}`;
@@ -566,7 +567,7 @@ if (!data.questoes?.length) throw new Error('Nenhuma questão encontrada.');
 
     setSalvandoLote(false);
     const msgProvas = provasInfo.length ? ` Vinculadas à prova: ${provasInfo.join(', ')}.` : '';
-    const msgPuladas = puladas > 0 ? ` ${puladas} questão(ões) pulada(s) por falta de instituto/ano/disciplina/alternativas — confira antes de salvar de novo.` : '';
+    const msgPuladas = puladas > 0 ? ` ${puladas} questão(ões) pulada(s). ${primeiroErro ? 'Erro: ' + primeiroErro : 'Verifique instituto/ano/disciplina/alternativas.'}` : '';
     setSucesso(`${salvos} questão(ões) salva(s) com sucesso!${msgProvas}${msgPuladas}`);
     if (puladas === 0) {
       setModo('escolher');
