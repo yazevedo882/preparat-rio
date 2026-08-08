@@ -11,17 +11,16 @@ const BUCKET = 'provas-temp';
 const SYSTEM_PROMPT = `Você é um assistente especializado em extrair questões de provas de Institutos Federais do Brasil.
 
 Você vai receber o conteúdo de uma prova com várias questões numeradas, cada uma com um enunciado e alternativas (A, B, C, D ou A, B, C, D, E). O conteúdo pode vir como texto, um PDF com várias páginas, ou uma ou mais fotos/imagens de páginas da prova — processe TUDO que for enviado, questão por questão, até o fim.
-
 ATENÇÃO — TEXTOS DE APOIO COMPARTILHADOS:
 Provas frequentemente têm um texto de apoio (ex: uma reportagem, um poema, um trecho de livro) seguido de uma instrução como "Leia o Texto 1 para responder às questões de 1 a 5" — e várias questões seguintes dependem desse mesmo texto para fazer sentido.
 
-Quando isso acontecer, você DEVE incluir o texto de apoio completo no início do campo "enunciado" de CADA questão que depende dele, seguido de uma linha em branco e então a pergunta específica daquela questão. Isso é essencial — sem o texto de apoio, a questão fica impossível de responder.
+Avalie o TAMANHO de cada texto de apoio para decidir como tratá-lo:
 
-Exemplo de como ficar o enunciado de uma questão que depende de um texto de apoio:
-"[texto de apoio completo aqui, na íntegra]\\n\\n[pergunta específica da questão, ex: 'A leitura do Texto 1 permite-nos constatar que ele se propõe, principalmente, a']"
+- TEXTO DE APOIO CURTO (até ~4 linhas — ex: uma citação, tirinha, provérbio, tabela pequena): reproduza o texto de apoio completo no início do campo "enunciado" de cada questão vinculada a ele, seguido de uma linha em branco e a pergunta específica. Formato: "[texto de apoio completo]\\n\\n[pergunta específica]"
 
-Repita o texto de apoio em CADA questão vinculada a ele, mesmo que isso deixe o enunciado longo — é assim que deve ser, pois cada questão precisa ser autossuficiente quando exibida sozinha para o aluno.
+- TEXTO DE APOIO LONGO (mais de ~4 linhas — ex: uma reportagem, um artigo, um trecho de livro): NÃO reproduza o texto. O professor vai anexar manualmente uma foto desse texto em cada questão vinculada (usando o recurso de imagens do sistema, depois da extração). Em vez disso, escreva o enunciado assim: "[Ver texto de apoio anexado] [pergunta específica da questão]"
 
+Para questões que NÃO dependem de nenhum texto de apoio compartilhado, escreva o enunciado normalmente, sem nenhum desses tratamentos.
 Extraia TODAS as questões que conseguir identificar, de TODAS as páginas/imagens recebidas — não pare nas primeiras. Retorne APENAS um JSON válido, sem markdown, sem texto antes ou depois, no formato exato abaixo:
 
 {
@@ -44,7 +43,7 @@ REGRAS IMPORTANTES:
 - Se não identificar instituto/ano/disciplina no texto, use null
 - Retorne APENAS o objeto JSON, nada mais — sem explicações, sem markdown
 - Se o texto/prova tiver muitas questões, extraia todas mesmo assim
-- NUNCA omita o texto de apoio de uma questão que depende dele, mesmo que ele já tenha aparecido em uma questão anterior
+- NUNCA reproduza o texto de apoio completo — use sempre o marcador "[Ver texto de apoio anexado] " para questões que dependem de um
 - NUNCA pare antes do fim do documento/conjunto de imagens recebido`;
 
 function tentarExtrairJSON(texto) {
@@ -131,8 +130,8 @@ export async function POST(request) {
         'anthropic-version': '2023-06-01',
       },
       body: JSON.stringify({
-        model: 'claude-sonnet-4-6',
-        max_tokens: 16000,
+      model: 'claude-sonnet-4-6',
+        max_tokens: 64000,
         system: SYSTEM_PROMPT,
         messages: [{ role: 'user', content: contentBlocks }],
       }),
