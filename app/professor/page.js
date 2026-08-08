@@ -14,6 +14,8 @@ function sanitizeFileName(fileName) {
     .toLowerCase();
 }
 
+const MAX_IMAGENS_POR_QUESTAO = 3;
+
 const DIFICULDADES = [
   { value: '', label: '— não classificado —' },
   { value: 'Fácil', label: 'Fácil' },
@@ -25,7 +27,7 @@ const CAMPOS_VAZIOS = {
   instituto: '', ano: '', disciplina: '', assunto: '',
   enunciado: '', opcaoA: '', opcaoB: '', opcaoC: '', opcaoD: '', opcaoE: '',
   correta: 'A', explicacao: '', padrao: '', dificuldade: '', numOpcoes: 4,
-  imagemArquivo: null, imagemPreview: null,
+  imagens: [], imagensPreview: [],
 };
 
 function Shell({ children }) {
@@ -68,9 +70,62 @@ function Campo({ label, valor, onChange, placeholder, textarea, type, rows }) {
   );
 }
 
+// Campo de múltiplas imagens (até 3), com preview e opção de remover cada uma
+function CampoImagens({ imagens, imagensPreview, onAdicionar, onRemover }) {
+  const cheio = (imagens?.length || 0) >= MAX_IMAGENS_POR_QUESTAO;
+  return (
+    <div>
+      <label className="block text-xs font-mono uppercase tracking-wider text-stone-500 mb-1">
+        Imagens (opcional — até {MAX_IMAGENS_POR_QUESTAO})
+      </label>
+      {!cheio && (
+        <input
+          type="file"
+          accept="image/*"
+          onChange={e => {
+            const f = e.target.files?.[0];
+            if (f) onAdicionar(f);
+            e.target.value = '';
+          }}
+          className="w-full text-sm text-stone-600 border border-stone-300 rounded-lg p-2 bg-stone-50"
+        />
+      )}
+      {cheio && <p className="text-xs text-stone-400">Limite de {MAX_IMAGENS_POR_QUESTAO} imagens atingido.</p>}
+      {(imagensPreview?.length || 0) > 0 && (
+        <div className="flex gap-2 flex-wrap mt-2">
+          {imagensPreview.map((src, i) => (
+            <div key={i} className="relative">
+              <img src={src} alt={`imagem ${i + 1}`} className="w-20 h-20 object-cover rounded-lg border border-stone-300" />
+              <button
+                type="button"
+                onClick={() => onRemover(i)}
+                className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-red-600 text-white text-xs leading-none flex items-center justify-center"
+              >
+                ×
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Formulário de revisão/edição de uma questão
 function FormQuestao({ q, idx, total, onChange, onClassificar, classificando, padroesDisponiveis, permitirImagem }) {
   const letras = q.numOpcoes === 5 ? ['A','B','C','D','E'] : ['A','B','C','D'];
+
+  function adicionarImagem(file) {
+    const atuais = q.imagens || [];
+    if (atuais.length >= MAX_IMAGENS_POR_QUESTAO) return;
+    onChange(idx, 'imagens', [...atuais, file]);
+    onChange(idx, 'imagensPreview', [...(q.imagensPreview || []), URL.createObjectURL(file)]);
+  }
+  function removerImagem(i) {
+    onChange(idx, 'imagens', (q.imagens || []).filter((_, ix) => ix !== i));
+    onChange(idx, 'imagensPreview', (q.imagensPreview || []).filter((_, ix) => ix !== i));
+  }
+
   return (
     <div className="bg-white border-2 border-slate-900 rounded-2xl p-4 space-y-3">
       <div className="flex justify-between items-center">
@@ -80,7 +135,7 @@ function FormQuestao({ q, idx, total, onChange, onClassificar, classificando, pa
           disabled={classificando === idx}
           className="text-xs font-mono bg-emerald-100 text-emerald-800 border border-emerald-300 px-3 py-1 rounded-lg disabled:opacity-50"
         >
-          {classificando === idx ? 'Analisando...' : '✦ Sugerir com IA'}
+          {classificando === idx ? 'Analisando...' : '✦ Reclassificar com IA'}
         </button>
       </div>
 
@@ -95,20 +150,12 @@ function FormQuestao({ q, idx, total, onChange, onClassificar, classificando, pa
       <Campo label="Enunciado" textarea rows={8} valor={q.enunciado} onChange={e => onChange(idx, 'enunciado', e.target.value)} placeholder="Enunciado da questão (inclui texto de apoio, se houver)" />
 
       {permitirImagem && (
-        <div>
-          <label className="block text-xs font-mono uppercase tracking-wider text-stone-500 mb-1">Imagem (opcional)</label>
-          <input
-            type="file"
-            accept="image/*"
-            onChange={e => {
-              const f = e.target.files?.[0] || null;
-              onChange(idx, 'imagemArquivo', f);
-              onChange(idx, 'imagemPreview', f ? URL.createObjectURL(f) : null);
-            }}
-            className="w-full text-sm text-stone-600 border border-stone-300 rounded-lg p-2 bg-stone-50"
-          />
-          {q.imagemPreview && <img src={q.imagemPreview} alt="preview" className="w-full max-w-xs mx-auto my-3 rounded-lg border border-stone-200" />}
-        </div>
+        <CampoImagens
+          imagens={q.imagens}
+          imagensPreview={q.imagensPreview}
+          onAdicionar={adicionarImagem}
+          onRemover={removerImagem}
+        />
       )}
 
       <div>
@@ -177,8 +224,6 @@ export default function Professor() {
   // Modo: 'escolher' | 'manual' | 'texto' | 'pdf' | 'revisar' | 'editar'
   const [modo, setModo] = useState('escolher');
   const [form, setForm] = useState({ ...CAMPOS_VAZIOS });
-  const [imagem, setImagem] = useState(null);
-  const [preview, setPreview] = useState(null);
   const [salvando, setSalvando] = useState(false);
   const [classificando, setClassificando] = useState(null);
   const [erro, setErro] = useState('');
@@ -241,12 +286,9 @@ export default function Professor() {
     </Shell>
   );
 
-  // ── Classificar com IA (manual ou lote) ──
-  async function classificarComIA(idx) {
-    const q = idx === 'manual' ? form : questoesLote[idx];
-    if (!q.enunciado?.trim()) { setErro('Preencha o enunciado antes.'); return; }
-    setClassificando(idx);
-    setErro('');
+  // ── Classifica uma única questão com IA e devolve os dados (sem mexer no estado) ──
+  async function buscarClassificacao(q) {
+    if (!q.enunciado?.trim()) return null;
     try {
       const letras = q.numOpcoes === 5 ? ['A','B','C','D','E'] : ['A','B','C','D'];
       const opcoes = letras.map(l => q[`opcao${l}`]).filter(Boolean);
@@ -256,31 +298,76 @@ export default function Professor() {
         body: JSON.stringify({ enunciado: q.enunciado, opcoes, disciplina: q.disciplina, assunto: q.assunto }),
       });
       const data = await res.json();
-      if (data.error) throw new Error(data.error);
-      if (idx === 'manual') {
-        setForm(f => ({
-          ...f,
-          padrao: data.padrao || f.padrao,
-          disciplina: f.disciplina?.trim() ? f.disciplina : (data.disciplina || f.disciplina),
-          assunto: f.assunto?.trim() ? f.assunto : (data.assunto || f.assunto),
-          dificuldade: data.dificuldade || f.dificuldade,
+      if (data.error) return null;
+      return data;
+    } catch (e) { return null; }
+  }
+
+  // ── Classifica automaticamente o lote inteiro, em blocos paralelos, sem exigir clique manual ──
+  async function classificarLoteAutomaticamente(lote) {
+    const TAMANHO_BLOCO = 4;
+    const resultado = [...lote];
+    const padroesNovos = [];
+
+    for (let i = 0; i < resultado.length; i += TAMANHO_BLOCO) {
+      setEtapaExtracao(`Classificando questões automaticamente... (${Math.min(i + TAMANHO_BLOCO, resultado.length)}/${resultado.length})`);
+      const bloco = resultado.slice(i, i + TAMANHO_BLOCO);
+      const respostas = await Promise.all(bloco.map(q => buscarClassificacao(q)));
+      respostas.forEach((data, j) => {
+        if (!data) return;
+        const q = bloco[j];
+        resultado[i + j] = {
+          ...q,
+          padrao: data.padrao || q.padrao,
+          disciplina: q.disciplina?.trim() ? q.disciplina : (data.disciplina || q.disciplina),
+          assunto: q.assunto?.trim() ? q.assunto : (data.assunto || q.assunto),
+          dificuldade: data.dificuldade || q.dificuldade,
           dicaIA: data.justificativa,
-        }));
-      } else {
-        setQuestoesLote(qs => qs.map((item, i) => i === idx ? {
-          ...item,
-          padrao: data.padrao || item.padrao,
-          disciplina: item.disciplina?.trim() ? item.disciplina : (data.disciplina || item.disciplina),
-          assunto: item.assunto?.trim() ? item.assunto : (data.assunto || item.assunto),
-          dificuldade: data.dificuldade || item.dificuldade,
-          dicaIA: data.justificativa,
-        } : item));
-      }
-      // Se a IA criou um padrão novo, atualiza a lista local para aparecer no autocomplete
-      if (data.padrao_novo && data.padrao && !padroesDisponiveis.includes(data.padrao)) {
-        setPadroesDisponiveis(prev => [...prev, data.padrao].sort());
-      }
-    } catch (e) { setErro('Erro IA: ' + e.message); }
+        };
+        if (data.padrao_novo && data.padrao) padroesNovos.push(data.padrao);
+      });
+    }
+
+    if (padroesNovos.length) {
+      setPadroesDisponiveis(prev => {
+        const novos = padroesNovos.filter(p => !prev.includes(p));
+        return novos.length ? [...prev, ...novos].sort() : prev;
+      });
+    }
+
+    return resultado;
+  }
+
+  // ── Classificar com IA (manual ou reclassificar item do lote) ──
+  async function classificarComIA(idx) {
+    const q = idx === 'manual' ? form : questoesLote[idx];
+    if (!q.enunciado?.trim()) { setErro('Preencha o enunciado antes.'); return; }
+    setClassificando(idx);
+    setErro('');
+    const data = await buscarClassificacao(q);
+    if (!data) { setErro('Erro ao classificar com IA.'); setClassificando(null); return; }
+    if (idx === 'manual') {
+      setForm(f => ({
+        ...f,
+        padrao: data.padrao || f.padrao,
+        disciplina: f.disciplina?.trim() ? f.disciplina : (data.disciplina || f.disciplina),
+        assunto: f.assunto?.trim() ? f.assunto : (data.assunto || f.assunto),
+        dificuldade: data.dificuldade || f.dificuldade,
+        dicaIA: data.justificativa,
+      }));
+    } else {
+      setQuestoesLote(qs => qs.map((item, i) => i === idx ? {
+        ...item,
+        padrao: data.padrao || item.padrao,
+        disciplina: item.disciplina?.trim() ? item.disciplina : (data.disciplina || item.disciplina),
+        assunto: item.assunto?.trim() ? item.assunto : (data.assunto || item.assunto),
+        dificuldade: data.dificuldade || item.dificuldade,
+        dicaIA: data.justificativa,
+      } : item));
+    }
+    if (data.padrao_novo && data.padrao && !padroesDisponiveis.includes(data.padrao)) {
+      setPadroesDisponiveis(prev => [...prev, data.padrao].sort());
+    }
     setClassificando(null);
   }
 
@@ -333,7 +420,7 @@ export default function Professor() {
       if (!data.questoes?.length) throw new Error('Nenhuma questão encontrada.');
 
       // Montar lote com dados extraídos
-      const lote = data.questoes.map(q => {
+      const loteBase = data.questoes.map(q => {
         const letras = q.numOpcoes === 5 ? ['A','B','C','D','E'] : ['A','B','C','D'];
         const obj = {
           ...CAMPOS_VAZIOS,
@@ -343,12 +430,18 @@ export default function Professor() {
           enunciado: q.enunciado || '',
           numOpcoes: q.numOpcoes || 4,
           correta: 'A',
+          imagens: [],
+          imagensPreview: [],
         };
         letras.forEach((l, i) => { obj[`opcao${l}`] = q.opcoes?.[i] || ''; });
         return obj;
       });
 
-      setQuestoesLote(lote);
+      // Classifica automaticamente todo o lote antes de mostrar a revisão —
+      // assim o professor não precisa clicar em "Sugerir com IA" questão por questão
+      const loteClassificado = await classificarLoteAutomaticamente(loteBase);
+
+      setQuestoesLote(loteClassificado);
       setIndiceRevisao(0);
       setGabarito('');
       setModo('revisar');
@@ -375,19 +468,23 @@ export default function Professor() {
 
     setSalvando(true);
     try {
-      let imagem_url = null;
-      if (imagem) {
-        const nomeArquivo = `${Date.now()}-${sanitizeFileName(imagem.name)}`;
-        const { error: erroUpload } = await supabase.storage.from('imagens-questoes').upload(nomeArquivo, imagem);
-        if (erroUpload) throw new Error(`Falha ao enviar imagem: ${erroUpload.message}`);
-        const { data: urlData } = supabase.storage.from('imagens-questoes').getPublicUrl(nomeArquivo);
-        imagem_url = urlData.publicUrl;
+      let imagens_urls = [];
+      for (const img of (form.imagens || [])) {
+        try {
+          const nomeArquivo = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}-${sanitizeFileName(img.name)}`;
+          const { error: erroUpload } = await supabase.storage.from('imagens-questoes').upload(nomeArquivo, img);
+          if (erroUpload) throw new Error(`Falha ao enviar imagem: ${erroUpload.message}`);
+          const { data: urlData } = supabase.storage.from('imagens-questoes').getPublicUrl(nomeArquivo);
+          imagens_urls.push(urlData.publicUrl);
+        } catch (e) { throw e; }
       }
       const { data: inserida, error } = await supabase.from('questoes').insert({
         instituto: form.instituto.trim(), ano, disciplina: form.disciplina.trim(),
         assunto: form.assunto.trim(), enunciado: form.enunciado.trim(), opcoes,
         correta: form.correta, explicacao: form.explicacao.trim() || null,
-        imagem_url, padrao: form.padrao || null, dificuldade: form.dificuldade || null,
+        imagem_url: imagens_urls[0] || null,
+        imagens_urls: imagens_urls.length ? imagens_urls : null,
+        padrao: form.padrao || null, dificuldade: form.dificuldade || null,
       }).select('id').single();
       if (error) throw new Error(error.message);
 
@@ -403,7 +500,6 @@ export default function Professor() {
       } catch (e) { /* não bloqueia */ }
 
       setForm({ ...CAMPOS_VAZIOS });
-      setImagem(null); setPreview(null);
       setSucesso('Questão salva com sucesso!' + msgProva);
     } catch (e) { setErro(e.message); }
     setSalvando(false);
@@ -423,15 +519,15 @@ export default function Professor() {
       const opcoes = letras.map(l => q[`opcao${l}`]?.trim()).filter(Boolean);
       if (opcoes.length < 4) { puladas++; continue; }
 
-      // Sobe a imagem dessa questão, se o professor anexou uma na revisão
-      let imagem_url = null;
-      if (q.imagemArquivo) {
+      // Sobe as imagens dessa questão (até 3), se o professor anexou alguma na revisão
+      let imagens_urls = [];
+      for (const img of (q.imagens || [])) {
         try {
-          const nomeArquivo = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}-${sanitizeFileName(q.imagemArquivo.name)}`;
-          const { error: erroUpload } = await supabase.storage.from('imagens-questoes').upload(nomeArquivo, q.imagemArquivo);
+          const nomeArquivo = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}-${sanitizeFileName(img.name)}`;
+          const { error: erroUpload } = await supabase.storage.from('imagens-questoes').upload(nomeArquivo, img);
           if (!erroUpload) {
             const { data: urlData } = supabase.storage.from('imagens-questoes').getPublicUrl(nomeArquivo);
-            imagem_url = urlData.publicUrl;
+            imagens_urls.push(urlData.publicUrl);
           }
         } catch (e) { /* não bloqueia o salvamento da questão por causa da imagem */ }
       }
@@ -441,7 +537,8 @@ export default function Professor() {
         assunto: q.assunto?.trim() || '', enunciado: q.enunciado.trim(), opcoes,
         correta: q.correta, explicacao: q.explicacao?.trim() || null,
         padrao: q.padrao || null, dificuldade: q.dificuldade || null,
-        imagem_url,
+        imagem_url: imagens_urls[0] || null,
+        imagens_urls: imagens_urls.length ? imagens_urls : null,
       }).select('id').single();
 
       if (error || !inserida) { puladas++; continue; }
@@ -523,7 +620,7 @@ export default function Professor() {
           </button>
           <button onClick={() => { setModo('texto'); setErro(''); setSucesso(''); setTextoProva(''); setArquivosImagem([]); setArquivoPdf(null); }} className="w-full text-left border-2 border-slate-900 rounded-xl p-4 hover:bg-stone-50 transition">
             <p className="font-mono font-bold text-sm text-slate-900">📄 PDF, foto ou texto da prova</p>
-            <p className="text-xs text-stone-500 mt-1">Envia o PDF, uma foto ou cola o texto — a IA extrai todas as questões</p>
+            <p className="text-xs text-stone-500 mt-1">Envia o PDF, uma foto ou cola o texto — a IA extrai e classifica todas as questões automaticamente</p>
           </button>
           <button onClick={() => { setModo('editar'); setErro(''); setSucesso(''); buscarQuestoesSalvas(); }} className="w-full text-left border-2 border-slate-900 rounded-xl p-4 hover:bg-stone-50 transition">
             <p className="font-mono font-bold text-sm text-slate-900">✏️ Editar questão salva</p>
@@ -555,11 +652,20 @@ export default function Professor() {
             </div>
             <Campo label="Enunciado" textarea valor={form.enunciado} onChange={e => atualizar('enunciado', e.target.value)} placeholder="Digite o enunciado" />
 
-            <div>
-              <label className="block text-xs font-mono uppercase tracking-wider text-stone-500 mb-1">Imagem (opcional)</label>
-              <input type="file" accept="image/*" onChange={e => { const f = e.target.files?.[0]; setImagem(f||null); setPreview(f ? URL.createObjectURL(f) : null); }} className="w-full text-sm text-stone-600 border border-stone-300 rounded-lg p-2 bg-stone-50" />
-              {preview && <img src={preview} alt="preview" className="w-full max-w-xs mx-auto my-3 rounded-lg border border-stone-200" />}
-            </div>
+            <CampoImagens
+              imagens={form.imagens}
+              imagensPreview={form.imagensPreview}
+              onAdicionar={file => {
+                const atuais = form.imagens || [];
+                if (atuais.length >= MAX_IMAGENS_POR_QUESTAO) return;
+                atualizar('imagens', [...atuais, file]);
+                atualizar('imagensPreview', [...(form.imagensPreview || []), URL.createObjectURL(file)]);
+              }}
+              onRemover={i => {
+                atualizar('imagens', (form.imagens || []).filter((_, ix) => ix !== i));
+                atualizar('imagensPreview', (form.imagensPreview || []).filter((_, ix) => ix !== i));
+              }}
+            />
 
             <div>
               <div className="flex items-center justify-between mb-1">
@@ -706,7 +812,7 @@ export default function Professor() {
           <div className="bg-white border-2 border-slate-900 rounded-2xl p-4">
             <div className="flex justify-between items-center">
               <button onClick={() => setModo('texto')} className="text-xs text-stone-400 font-mono underline">◂ voltar</button>
-              <span className="text-xs font-mono text-stone-500">{questoesLote.length} questões extraídas</span>
+              <span className="text-xs font-mono text-stone-500">{questoesLote.length} questões extraídas e classificadas</span>
             </div>
 
             {gabarito && (
