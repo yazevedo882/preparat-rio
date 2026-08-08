@@ -5,6 +5,15 @@ import Link from 'next/link';
 import { useAuth } from '../AuthProvider';
 import { supabase } from '../../lib/supabaseClient';
 
+// Remove acentos e caracteres especiais do nome do arquivo para não quebrar o upload no Supabase Storage
+function sanitizeFileName(fileName) {
+  return fileName
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-zA-Z0-9.\-_]/g, '-')
+    .toLowerCase();
+}
+
 const DIFICULDADES = [
   { value: '', label: '— não classificado —' },
   { value: 'Fácil', label: 'Fácil' },
@@ -265,7 +274,7 @@ export default function Professor() {
       let res;
       if (arquivoPdf) {
         setEtapaExtracao('Enviando PDF...');
-        const path = `${Date.now()}-${arquivoPdf.name.replace(/\s+/g, '-')}`;
+        const path = `${Date.now()}-${sanitizeFileName(arquivoPdf.name)}`;
         const { error: erroUpload } = await supabase.storage.from('provas-temp').upload(path, arquivoPdf, { contentType: arquivoPdf.type || 'application/pdf' });
         if (erroUpload) throw new Error(`Falha ao enviar PDF: ${erroUpload.message}`);
         setEtapaExtracao('Extraindo questões com IA...');
@@ -278,7 +287,7 @@ export default function Professor() {
         setEtapaExtracao(`Enviando ${arquivosImagem.length} foto(s)...`);
         const paths = [];
         for (const f of arquivosImagem) {
-          const path = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}-${f.name.replace(/\s+/g, '-')}`;
+          const path = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}-${sanitizeFileName(f.name)}`;
           const { error: erroUpload } = await supabase.storage.from('provas-temp').upload(path, f, { contentType: f.type || 'image/jpeg' });
           if (erroUpload) throw new Error(`Falha ao enviar foto (${f.name}): ${erroUpload.message}`);
           paths.push(path);
@@ -350,7 +359,7 @@ export default function Professor() {
     try {
       let imagem_url = null;
       if (imagem) {
-        const nomeArquivo = `${Date.now()}-${imagem.name.replace(/\s+/g, '-')}`;
+        const nomeArquivo = `${Date.now()}-${sanitizeFileName(imagem.name)}`;
         const { error: erroUpload } = await supabase.storage.from('imagens-questoes').upload(nomeArquivo, imagem);
         if (erroUpload) throw new Error(`Falha ao enviar imagem: ${erroUpload.message}`);
         const { data: urlData } = supabase.storage.from('imagens-questoes').getPublicUrl(nomeArquivo);
@@ -785,4 +794,4 @@ export default function Professor() {
   );
 
   return null;
-            }
+}
