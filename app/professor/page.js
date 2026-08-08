@@ -416,8 +416,8 @@ export default function Professor() {
         return;
       }
       const data = await res.json();
-      if (data.error) throw new Error(data.error);
-      if (!data.questoes?.length) throw new Error('Nenhuma questão encontrada.');
+if (data.error) throw new Error(data.error + (data.debug ? ' | DEBUG: ' + data.debug : ''));
+if (!data.questoes?.length) throw new Error('Nenhuma questão encontrada.');
 
       // Montar lote com dados extraídos
       const loteBase = data.questoes.map(q => {
