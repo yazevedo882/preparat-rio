@@ -25,6 +25,7 @@ const CAMPOS_VAZIOS = {
   instituto: '', ano: '', disciplina: '', assunto: '',
   enunciado: '', opcaoA: '', opcaoB: '', opcaoC: '', opcaoD: '', opcaoE: '',
   correta: 'A', explicacao: '', padrao: '', dificuldade: '', numOpcoes: 4,
+  imagemArquivo: null, imagemPreview: null,
 };
 
 function Shell({ children }) {
@@ -68,7 +69,7 @@ function Campo({ label, valor, onChange, placeholder, textarea, type, rows }) {
 }
 
 // Formulário de revisão/edição de uma questão
-function FormQuestao({ q, idx, total, onChange, onClassificar, classificando, padroesDisponiveis }) {
+function FormQuestao({ q, idx, total, onChange, onClassificar, classificando, padroesDisponiveis, permitirImagem }) {
   const letras = q.numOpcoes === 5 ? ['A','B','C','D','E'] : ['A','B','C','D'];
   return (
     <div className="bg-white border-2 border-slate-900 rounded-2xl p-4 space-y-3">
@@ -92,6 +93,23 @@ function FormQuestao({ q, idx, total, onChange, onClassificar, classificando, pa
         <Campo label="Assunto" valor={q.assunto} onChange={e => onChange(idx, 'assunto', e.target.value)} placeholder="Ex: Frações" />
       </div>
       <Campo label="Enunciado" textarea rows={8} valor={q.enunciado} onChange={e => onChange(idx, 'enunciado', e.target.value)} placeholder="Enunciado da questão (inclui texto de apoio, se houver)" />
+
+      {permitirImagem && (
+        <div>
+          <label className="block text-xs font-mono uppercase tracking-wider text-stone-500 mb-1">Imagem (opcional)</label>
+          <input
+            type="file"
+            accept="image/*"
+            onChange={e => {
+              const f = e.target.files?.[0] || null;
+              onChange(idx, 'imagemArquivo', f);
+              onChange(idx, 'imagemPreview', f ? URL.createObjectURL(f) : null);
+            }}
+            className="w-full text-sm text-stone-600 border border-stone-300 rounded-lg p-2 bg-stone-50"
+          />
+          {q.imagemPreview && <img src={q.imagemPreview} alt="preview" className="w-full max-w-xs mx-auto my-3 rounded-lg border border-stone-200" />}
+        </div>
+      )}
 
       <div>
         <label className="block text-xs font-mono uppercase tracking-wider text-stone-500 mb-1">Alternativas</label>
@@ -395,23 +413,38 @@ export default function Professor() {
   async function salvarLote() {
     setSalvandoLote(true); setErro('');
     let salvos = 0;
+    let puladas = 0;
     const idsPorProva = {}; // agrupa questao_id por "instituto|ano"
 
     for (const q of questoesLote) {
       const ano = Number(q.ano);
-      if (!q.instituto?.trim() || !q.disciplina?.trim() || !q.enunciado?.trim() || !ano) continue;
+      if (!q.instituto?.trim() || !q.disciplina?.trim() || !q.enunciado?.trim() || !ano) { puladas++; continue; }
       const letras = q.numOpcoes === 5 ? ['A','B','C','D','E'] : ['A','B','C','D'];
       const opcoes = letras.map(l => q[`opcao${l}`]?.trim()).filter(Boolean);
-      if (opcoes.length < 4) continue;
+      if (opcoes.length < 4) { puladas++; continue; }
+
+      // Sobe a imagem dessa questão, se o professor anexou uma na revisão
+      let imagem_url = null;
+      if (q.imagemArquivo) {
+        try {
+          const nomeArquivo = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}-${sanitizeFileName(q.imagemArquivo.name)}`;
+          const { error: erroUpload } = await supabase.storage.from('imagens-questoes').upload(nomeArquivo, q.imagemArquivo);
+          if (!erroUpload) {
+            const { data: urlData } = supabase.storage.from('imagens-questoes').getPublicUrl(nomeArquivo);
+            imagem_url = urlData.publicUrl;
+          }
+        } catch (e) { /* não bloqueia o salvamento da questão por causa da imagem */ }
+      }
 
       const { data: inserida, error } = await supabase.from('questoes').insert({
         instituto: q.instituto.trim(), ano, disciplina: q.disciplina.trim(),
         assunto: q.assunto?.trim() || '', enunciado: q.enunciado.trim(), opcoes,
         correta: q.correta, explicacao: q.explicacao?.trim() || null,
         padrao: q.padrao || null, dificuldade: q.dificuldade || null,
+        imagem_url,
       }).select('id').single();
 
-      if (error || !inserida) continue;
+      if (error || !inserida) { puladas++; continue; }
       salvos++;
 
       const chave = `${q.instituto.trim()}|${ano}`;
@@ -436,9 +469,12 @@ export default function Professor() {
 
     setSalvandoLote(false);
     const msgProvas = provasInfo.length ? ` Vinculadas à prova: ${provasInfo.join(', ')}.` : '';
-    setSucesso(`${salvos} questão(ões) salva(s) com sucesso!${msgProvas}`);
-    setModo('escolher');
-    setQuestoesLote([]);
+    const msgPuladas = puladas > 0 ? ` ${puladas} questão(ões) pulada(s) por falta de instituto/ano/disciplina/alternativas — confira antes de salvar de novo.` : '';
+    setSucesso(`${salvos} questão(ões) salva(s) com sucesso!${msgProvas}${msgPuladas}`);
+    if (puladas === 0) {
+      setModo('escolher');
+      setQuestoesLote([]);
+    }
   }
 
   // ── Buscar questões salvas para editar ──
@@ -700,10 +736,12 @@ export default function Professor() {
               onClassificar={classificarComIA}
               classificando={classificando}
               padroesDisponiveis={padroesDisponiveis}
+              permitirImagem
             />
           )}
 
           {erro && <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-xs text-red-700">{erro}</div>}
+          {sucesso && <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3 text-xs text-emerald-700">{sucesso}</div>}
 
           <button onClick={salvarLote} disabled={salvandoLote} className="w-full bg-emerald-700 text-white font-mono uppercase tracking-wider text-sm font-bold py-3 rounded-lg disabled:bg-stone-300 transition">
             {salvandoLote ? 'Salvando...' : `Salvar todas as ${questoesLote.length} questões ▸`}
