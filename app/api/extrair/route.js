@@ -1,4 +1,4 @@
-export const maxDuration = 160;
+export const maxDuration = 300;
 import { createClient } from '@supabase/supabase-js';
 
 const supabaseAdmin = createClient(
