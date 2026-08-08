@@ -16,6 +16,12 @@ function sanitizeFileName(fileName) {
 
 const MAX_IMAGENS_POR_QUESTAO = 3;
 
+// Chaves usadas no localStorage para manter o job de extração em segundo plano
+// e o rascunho das questões extraídas sobrevivendo a um refresh da página
+const CHAVE_JOB_EXTRACAO = 'qif_job_extracao_id';
+const CHAVE_RASCUNHO_LOTE = 'qif_rascunho_lote';
+const CHAVE_RASCUNHO_GABARITO = 'qif_rascunho_gabarito';
+
 const DIFICULDADES = [
   { value: '', label: '— não classificado —' },
   { value: 'Fácil', label: 'Fácil' },
@@ -257,6 +263,50 @@ export default function Professor() {
     });
   }, []);
 
+  // Ao carregar a página: se havia uma extração em segundo plano em andamento
+  // (ex: o professor saiu do app antes de terminar), retoma o acompanhamento dela.
+  // Se não houver job ativo, mas houver um rascunho de revisão salvo, restaura ele.
+  useEffect(() => {
+    const jobIdSalvo = typeof window !== 'undefined' ? localStorage.getItem(CHAVE_JOB_EXTRACAO) : null;
+    if (jobIdSalvo) {
+      setExtraindo(true);
+      setEtapaExtracao('Retomando extração em segundo plano...');
+      setModo('texto');
+      acompanharJob(jobIdSalvo);
+      return;
+    }
+    const rascunhoSalvo = typeof window !== 'undefined' ? localStorage.getItem(CHAVE_RASCUNHO_LOTE) : null;
+    if (rascunhoSalvo) {
+      try {
+        const lote = JSON.parse(rascunhoSalvo);
+        if (Array.isArray(lote) && lote.length) {
+          setQuestoesLote(lote.map(q => ({ ...q, imagens: [], imagensPreview: [] })));
+          setIndiceRevisao(0);
+          setGabarito(localStorage.getItem(CHAVE_RASCUNHO_GABARITO) || '');
+          setModo('revisar');
+          setSucesso('Rascunho de uma extração anterior foi restaurado. Imagens anexadas antes do refresh precisam ser reanexadas.');
+        }
+      } catch (e) { /* rascunho corrompido, ignora */ }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Salva o lote em revisão como rascunho a cada mudança, para sobreviver a um refresh da página.
+  // Imagens (arquivos) não são salvas aqui — só são recuperáveis se o professor não recarregar a página.
+  useEffect(() => {
+    if (modo !== 'revisar' || typeof window === 'undefined') return;
+    if (!questoesLote.length) return;
+    const loteSemArquivos = questoesLote.map(({ imagens, imagensPreview, ...resto }) => resto);
+    localStorage.setItem(CHAVE_RASCUNHO_LOTE, JSON.stringify(loteSemArquivos));
+    localStorage.setItem(CHAVE_RASCUNHO_GABARITO, gabarito);
+  }, [questoesLote, gabarito, modo]);
+
+  function limparRascunho() {
+    if (typeof window === 'undefined') return;
+    localStorage.removeItem(CHAVE_RASCUNHO_LOTE);
+    localStorage.removeItem(CHAVE_RASCUNHO_GABARITO);
+  }
+
   const atualizar = useCallback((campo, valor) => {
     setForm(f => ({ ...f, [campo]: valor }));
   }, []);
@@ -372,22 +422,79 @@ export default function Professor() {
   }
 
   // ── Extrair questões de texto/imagem/PDF ──
+  // Consulta periodicamente o status de um job de extração no servidor.
+  // Roda em segundo plano — não depende do app continuar aberto/em primeiro plano,
+  // já que quem faz o trabalho pesado é o servidor, não o navegador do professor.
+  function acompanharJob(jobId) {
+    const intervalo = setInterval(async () => {
+      try {
+        const res = await fetch(`/api/extrair-status?id=${jobId}`);
+        const data = await res.json();
+        if (data.error) {
+          clearInterval(intervalo);
+          localStorage.removeItem(CHAVE_JOB_EXTRACAO);
+          setErro('Erro ao consultar extração: ' + data.error);
+          setEtapaExtracao(''); setExtraindo(false);
+          return;
+        }
+        if (data.status === 'erro') {
+          clearInterval(intervalo);
+          localStorage.removeItem(CHAVE_JOB_EXTRACAO);
+          setErro('Erro ao extrair: ' + (data.erro || 'erro desconhecido'));
+          setEtapaExtracao(''); setExtraindo(false);
+          return;
+        }
+        if (data.status === 'concluido') {
+          clearInterval(intervalo);
+          localStorage.removeItem(CHAVE_JOB_EXTRACAO);
+          const resultado = data.resultado;
+          if (!resultado?.questoes?.length) {
+            setErro('Nenhuma questão encontrada.');
+            setEtapaExtracao(''); setExtraindo(false);
+            return;
+          }
+          const loteBase = resultado.questoes.map(q => {
+            const letras = q.numOpcoes === 5 ? ['A','B','C','D','E'] : ['A','B','C','D'];
+            const obj = {
+              ...CAMPOS_VAZIOS,
+              instituto: resultado.instituto || '',
+              ano: resultado.ano ? String(resultado.ano) : '',
+              disciplina: resultado.disciplina || '',
+              enunciado: q.enunciado || '',
+              numOpcoes: q.numOpcoes || 4,
+              correta: 'A',
+              imagens: [],
+              imagensPreview: [],
+            };
+            letras.forEach((l, i) => { obj[`opcao${l}`] = q.opcoes?.[i] || ''; });
+            return obj;
+          });
+          setEtapaExtracao(`Classificando questões automaticamente... (0/${loteBase.length})`);
+          const loteClassificado = await classificarLoteAutomaticamente(loteBase);
+          setQuestoesLote(loteClassificado);
+          setIndiceRevisao(0);
+          setSucesso('');
+          setModo('revisar');
+          setEtapaExtracao(''); setExtraindo(false);
+        }
+        // status 'processando' -> continua esperando, não faz nada ainda
+      } catch (e) {
+        // falha pontual de rede ao consultar — tenta de novo na próxima batida do intervalo
+      }
+    }, 4000);
+  }
+
   async function extrairQuestoes() {
     setExtraindo(true);
     setErro('');
     try {
-      let res;
+      let body;
       if (arquivoPdf) {
         setEtapaExtracao('Enviando PDF...');
         const path = `${Date.now()}-${sanitizeFileName(arquivoPdf.name)}`;
         const { error: erroUpload } = await supabase.storage.from('provas-temp').upload(path, arquivoPdf, { contentType: arquivoPdf.type || 'application/pdf' });
         if (erroUpload) throw new Error(`Falha ao enviar PDF: ${erroUpload.message}`);
-        setEtapaExtracao('Extraindo questões com IA...');
-        res = await fetch('/api/extrair', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ pdfPath: path }),
-        });
+        body = { pdfPath: path };
       } else if (arquivosImagem.length > 0) {
         setEtapaExtracao(`Enviando ${arquivosImagem.length} foto(s)...`);
         const paths = [];
@@ -397,57 +504,32 @@ export default function Professor() {
           if (erroUpload) throw new Error(`Falha ao enviar foto (${f.name}): ${erroUpload.message}`);
           paths.push(path);
         }
-        setEtapaExtracao('Extraindo questões com IA...');
-        res = await fetch('/api/extrair', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ imagePaths: paths }),
-        });
+        body = { imagePaths: paths };
       } else if (textoProva.trim()) {
-        setEtapaExtracao('Extraindo questões com IA...');
-        res = await fetch('/api/extrair', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ texto: textoProva }),
-        });
+        body = { texto: textoProva };
       } else {
         setErro('Cole o texto da prova, envie um PDF ou foto(s).');
         setExtraindo(false);
         return;
       }
+
+      setEtapaExtracao('Extraindo questões com IA (pode fechar o app, continua rodando)...');
+      const res = await fetch('/api/extrair-iniciar', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
       const data = await res.json();
       if (data.error) throw new Error(data.error);
-      if (!data.questoes?.length) throw new Error('Nenhuma questão encontrada.');
 
-      // Montar lote com dados extraídos
-      const loteBase = data.questoes.map(q => {
-        const letras = q.numOpcoes === 5 ? ['A','B','C','D','E'] : ['A','B','C','D'];
-        const obj = {
-          ...CAMPOS_VAZIOS,
-          instituto: data.instituto || '',
-          ano: data.ano ? String(data.ano) : '',
-          disciplina: data.disciplina || '',
-          enunciado: q.enunciado || '',
-          numOpcoes: q.numOpcoes || 4,
-          correta: 'A',
-          imagens: [],
-          imagensPreview: [],
-        };
-        letras.forEach((l, i) => { obj[`opcao${l}`] = q.opcoes?.[i] || ''; });
-        return obj;
-      });
-
-      // Classifica automaticamente todo o lote antes de mostrar a revisão —
-      // assim o professor não precisa clicar em "Sugerir com IA" questão por questão
-      const loteClassificado = await classificarLoteAutomaticamente(loteBase);
-
-      setQuestoesLote(loteClassificado);
-      setIndiceRevisao(0);
-      setGabarito('');
-      setModo('revisar');
-    } catch (e) { setErro('Erro ao extrair: ' + e.message); }
-    setEtapaExtracao('');
-    setExtraindo(false);
+      localStorage.setItem(CHAVE_JOB_EXTRACAO, data.id);
+      acompanharJob(data.id);
+      // extraindo continua true e o polling acima cuida do resto — inclusive se o
+      // professor sair da tela agora e voltar depois, o useEffect de retomada assume.
+    } catch (e) {
+      setErro('Erro ao extrair: ' + e.message);
+      setEtapaExtracao(''); setExtraindo(false);
+    }
   }
 
   // ── Aplicar gabarito ao lote ──
@@ -570,6 +652,7 @@ export default function Professor() {
     const msgPuladas = puladas > 0 ? ` ${puladas} questão(ões) pulada(s). ${primeiroErro ? 'Erro: ' + primeiroErro : 'Verifique instituto/ano/disciplina/alternativas.'}` : '';
     setSucesso(`${salvos} questão(ões) salva(s) com sucesso!${msgProvas}${msgPuladas}`);
     if (puladas === 0) {
+      limparRascunho();
       setModo('escolher');
       setQuestoesLote([]);
     }
@@ -812,9 +895,10 @@ export default function Professor() {
         <div className="space-y-3">
           <div className="bg-white border-2 border-slate-900 rounded-2xl p-4">
             <div className="flex justify-between items-center">
-              <button onClick={() => setModo('texto')} className="text-xs text-stone-400 font-mono underline">◂ voltar</button>
+              <button onClick={() => { limparRascunho(); setModo('texto'); setQuestoesLote([]); }} className="text-xs text-stone-400 font-mono underline">◂ voltar</button>
               <span className="text-xs font-mono text-stone-500">{questoesLote.length} questões extraídas e classificadas</span>
             </div>
+            <p className="text-xs text-emerald-700 mt-2">💾 Rascunho salvo automaticamente — pode fechar/atualizar a página sem perder as questões.</p>
 
             {gabarito && (
               <div className="mt-3">
