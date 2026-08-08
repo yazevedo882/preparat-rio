@@ -1,6 +1,6 @@
 export const maxDuration = 300;
 import { createClient } from '@supabase/supabase-js';
-
+import { jsonrepair } from 'jsonrepair';
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL,
   process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
@@ -52,17 +52,25 @@ function tentarExtrairJSON(texto) {
   try {
     return JSON.parse(limpo);
   } catch (e) {
-    const inicio = limpo.indexOf('{');
-    const fim = limpo.lastIndexOf('}');
-    if (inicio !== -1 && fim !== -1 && fim > inicio) {
-      const possivel = limpo.slice(inicio, fim + 1);
-      try {
-        return JSON.parse(possivel);
-      } catch (e2) {
-        throw new Error('JSON malformado mesmo após limpeza: ' + e2.message);
+    try {
+      return JSON.parse(jsonrepair(limpo));
+    } catch (e2) {
+      const inicio = limpo.indexOf('{');
+      const fim = limpo.lastIndexOf('}');
+      if (inicio !== -1 && fim !== -1 && fim > inicio) {
+        const possivel = limpo.slice(inicio, fim + 1);
+        try {
+          return JSON.parse(possivel);
+        } catch (e3) {
+          try {
+            return JSON.parse(jsonrepair(possivel));
+          } catch (e4) {
+            throw new Error('JSON malformado mesmo após reparo: ' + e4.message);
+          }
+        }
       }
+      throw new Error('Resposta da IA não contém um JSON válido: ' + e.message);
     }
-    throw new Error('Resposta da IA não contém um JSON válido: ' + e.message);
   }
 }
 
