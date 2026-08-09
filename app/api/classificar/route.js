@@ -5,6 +5,14 @@ const supabaseAdmin = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
 );
 
+// Lista fechada de disciplinas — a IA sempre escolhe uma destas, nunca inventa variação
+// (ex: "Português", "Portugues" e "Língua Portuguesa" viram sempre "Língua Portuguesa")
+const DISCIPLINAS_PERMITIDAS = [
+  'Língua Portuguesa', 'Matemática', 'Biologia', 'Física', 'Química',
+  'História', 'Geografia', 'Filosofia', 'Sociologia', 'Inglês',
+  'Espanhol', 'Artes', 'Educação Física', 'Informática', 'Atualidades',
+];
+
 // Parsing tolerante: tenta JSON normal, depois corta sobras, depois extrai campo por campo
 function tentarExtrairJSON(texto) {
   let limpo = texto.replace(/```json/gi, '').replace(/```/g, '').trim();
@@ -41,6 +49,21 @@ function tentarExtrairJSON(texto) {
   }
 }
 
+// Normaliza a disciplina retornada pela IA para bater exatamente com a lista fixa,
+// mesmo que ela tenha respondido com grafia/variação ligeiramente diferente
+function normalizarDisciplina(valor) {
+  if (!valor) return valor;
+  const alvo = valor.trim().toLowerCase();
+  const encontrada = DISCIPLINAS_PERMITIDAS.find(d => d.toLowerCase() === alvo);
+  if (encontrada) return encontrada;
+  // Casos comuns de variação
+  if (/^portugu/.test(alvo) || alvo.includes('portugues')) return 'Língua Portuguesa';
+  if (/^ingl/.test(alvo)) return 'Inglês';
+  if (/^espanh/.test(alvo)) return 'Espanhol';
+  if (/^matem/.test(alvo)) return 'Matemática';
+  return valor;
+}
+
 export async function POST(request) {
   try {
     const { enunciado, opcoes, disciplina, assunto } = await request.json();
@@ -50,21 +73,43 @@ export async function POST(request) {
       return Response.json({ disciplina: '', assunto: '', padrao: '', dificuldade: '', justificativa: 'IA não configurada.', correta: '' });
     }
 
+    const disciplinaNormalizada = normalizarDisciplina(disciplina);
+
     // Busca padrões já existentes — biblioteca compartilhada entre institutos
     const { data: padroesExistentes } = await supabaseAdmin
       .from('padroes')
       .select('nome')
       .order('nome')
       .limit(30);
-
     const listaPadroes = (padroesExistentes || []).map(p => p.nome).join(', ');
+
+    // Busca assuntos já cadastrados nessa disciplina, para a IA priorizar reaproveitar
+    // em vez de criar um assunto hiperespecífico e exclusivo pra cada questão
+    let assuntosExistentes = [];
+    if (disciplinaNormalizada) {
+      const { data } = await supabaseAdmin
+        .from('questoes')
+        .select('assunto')
+        .eq('disciplina', disciplinaNormalizada)
+        .not('assunto', 'is', null)
+        .limit(500);
+      assuntosExistentes = [...new Set((data || []).map(a => a.assunto).filter(Boolean))].slice(0, 40);
+    }
+    const listaAssuntos = assuntosExistentes.join(', ');
 
     const SYSTEM = `Você é um especialista em questões de vestibular de Institutos Federais do Brasil.
 
 Analise a questão abaixo e determine:
-1. DISCIPLINA — a matéria escolar (ex: Matemática, Língua Portuguesa, Biologia, Física, História). Só sugira se não foi informada.
-2. ASSUNTO — o tema específico dentro da disciplina (ex: "Frações", "Interpretação textual", "Genética").
+
+1. DISCIPLINA — escolha EXATAMENTE uma destas opções (sem variações de grafia, sem sinônimos):
+${DISCIPLINAS_PERMITIDAS.join(', ')}
+Mesmo que a disciplina informada no texto venha escrita diferente (ex: "Português", "Portugues"), normalize para o nome correto da lista acima (ex: "Língua Portuguesa").
+
+2. ASSUNTO — o tema específico dentro da disciplina. PRIORIZE FORTEMENTE reaproveitar um destes assuntos já cadastrados nessa disciplina: ${listaAssuntos || '(nenhum ainda cadastrado nessa disciplina, pode criar um novo com nome amplo e reutilizável)'}.
+Só crie um assunto novo se a questão realmente não se encaixar em nenhum desses. Ao criar um assunto novo, use um nome AMPLO e REUTILIZÁVEL (ex: "Interpretação textual", "Concordância verbal", "Figuras de linguagem", "Coesão textual") — nunca uma descrição longa e específica de uma única questão (ex: nunca "Ambiguidade lexical em texto humorístico sobre viagens" — nesse caso o assunto correto seria só "Interpretação textual" ou "Figuras de linguagem"). O objetivo é que várias questões diferentes compartilhem o mesmo assunto, formando listas de estudo com várias questões cada.
+
 3. PADRÃO — o tipo/formato da questão. Prefira reutilizar um destes já existentes: ${listaPadroes || '(nenhum ainda, pode criar o primeiro)'}. Só crie um novo nome se a questão realmente não se encaixar em nenhum.
+
 4. DIFICULDADE — "Fácil" (resposta direta), "Médio" (2-3 passos de raciocínio) ou "Difícil" (múltiplos conceitos / alta abstração).
 
 Responda APENAS com JSON válido, sem markdown, sem texto antes ou depois. Formato exato:
@@ -108,6 +153,11 @@ Alternativas: ${Array.isArray(opcoes) ? opcoes.map((o, i) => `${letras[i]}) ${o}
       resultado = tentarExtrairJSON(texto);
     } catch (parseError) {
       return Response.json({ error: 'Não foi possível interpretar a resposta da IA: ' + parseError.message, debug: texto.slice(0, 300) }, { status: 500 });
+    }
+
+    // Garante que a disciplina final também está normalizada, mesmo se a IA "escorregar"
+    if (resultado.disciplina) {
+      resultado.disciplina = normalizarDisciplina(resultado.disciplina);
     }
 
     // Salva padrão novo na biblioteca, se for o caso
