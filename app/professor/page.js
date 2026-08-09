@@ -252,6 +252,7 @@ export default function Professor() {
   const [questoesSalvas, setQuestoesSalvas] = useState([]);
   const [buscandoSalvas, setBuscandoSalvas] = useState(false);
   const [questaoEditando, setQuestaoEditando] = useState(null);
+  const [pastaSelecionada, setPastaSelecionada] = useState(null); // { instituto, ano } | null
 
   // Edição em lote (selecionar várias questões salvas e mudar ano/gabarito de todas de uma vez)
   const [selecionadas, setSelecionadas] = useState([]);
@@ -668,12 +669,23 @@ export default function Professor() {
     }
   }
 
-  // ── Buscar questões salvas para editar ──
+  // ── Buscar questões salvas para editar (todas, sem limite, para agrupar em pastas por prova) ──
   async function buscarQuestoesSalvas() {
     setBuscandoSalvas(true);
-    const { data } = await supabase.from('questoes').select('*').order('id', { ascending: false }).limit(50);
+    const { data } = await supabase.from('questoes').select('*').order('id', { ascending: false });
     setQuestoesSalvas(data || []);
     setBuscandoSalvas(false);
+  }
+
+  // ── Agrupa as questões salvas em "pastas" por instituto + ano ──
+  function pastasDeQuestoes() {
+    const grupos = {};
+    for (const q of questoesSalvas) {
+      const chave = `${q.instituto || '—'}|${q.ano || '—'}`;
+      if (!grupos[chave]) grupos[chave] = { instituto: q.instituto, ano: q.ano, total: 0 };
+      grupos[chave].total++;
+    }
+    return Object.values(grupos).sort((a, b) => (b.ano || 0) - (a.ano || 0) || String(a.instituto).localeCompare(String(b.instituto)));
   }
 
   // ── Reclassifica TODAS as questões já salvas no banco (disciplina + assunto),
@@ -1034,7 +1046,8 @@ export default function Professor() {
   }
 
   // Tela: editar questões salvas
-  if (modo === 'editar' && !questaoEditando) return (
+  // Tela: lista de pastas (uma por prova/instituto+ano)
+  if (modo === 'editar' && !questaoEditando && !pastaSelecionada) return (
     <Shell>
       <div className="bg-white border-2 border-slate-900 rounded-2xl p-5">
         <div className="flex justify-between items-center mb-4">
@@ -1052,59 +1065,93 @@ export default function Professor() {
           {reclassificando ? (progressoReclassificacao || 'Reclassificando...') : '🔄 Reclassificar todas automaticamente'}
         </button>
 
-        {!buscandoSalvas && questoesSalvas.length > 0 && (
-          <div className="border border-stone-200 rounded-xl p-3 mb-4 bg-stone-50 space-y-3">
-            <div className="flex justify-between items-center">
-              <span className="text-xs font-mono text-stone-500">{selecionadas.length} selecionada(s) de {questoesSalvas.length}</span>
-              <div className="flex gap-3">
-                <button onClick={selecionarTodas} className="text-xs font-mono text-emerald-700 underline">selecionar todas</button>
-                <button onClick={limparSelecao} className="text-xs font-mono text-stone-400 underline">limpar</button>
-              </div>
-            </div>
-
-            {selecionadas.length > 0 && (
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="block text-xs font-mono uppercase tracking-wider text-stone-500 mb-1">Novo ano</label>
-                  <input
-                    type="number"
-                    value={novoAnoLote}
-                    onChange={e => setNovoAnoLote(e.target.value)}
-                    placeholder="— manter —"
-                    className="w-full border border-stone-300 rounded-lg p-2 bg-white text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-600"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-mono uppercase tracking-wider text-stone-500 mb-1">Novo gabarito</label>
-                  <select
-                    value={novaCorretaLote}
-                    onChange={e => setNovaCorretaLote(e.target.value)}
-                    className="w-full border border-stone-300 rounded-lg p-2 bg-white text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-600"
-                  >
-                    <option value="">— manter —</option>
-                    {['A', 'B', 'C', 'D', 'E'].map(l => <option key={l} value={l}>{l}</option>)}
-                  </select>
-                </div>
-                <button
-                  onClick={aplicarEdicaoEmLote}
-                  disabled={aplicandoLote}
-                  className="col-span-2 bg-emerald-700 text-white font-mono uppercase tracking-wider text-xs font-bold py-2.5 rounded-lg disabled:bg-stone-300 transition"
-                >
-                  {aplicandoLote ? 'Aplicando...' : `Aplicar às ${selecionadas.length} questão(ões) ▸`}
-                </button>
-                <p className="col-span-2 text-xs text-stone-400">
-                  Deixe um campo em branco para não alterá-lo nas questões selecionadas.
-                </p>
-              </div>
-            )}
-          </div>
-        )}
-
         {buscandoSalvas ? (
           <p className="text-sm text-stone-400">Carregando...</p>
         ) : (
+          <div className="space-y-2">
+            <p className="text-xs font-mono text-stone-400 mb-1">{questoesSalvas.length} questões no banco, em {pastasDeQuestoes().length} prova(s)</p>
+            {pastasDeQuestoes().map(p => (
+              <button
+                key={`${p.instituto}|${p.ano}`}
+                onClick={() => { setPastaSelecionada({ instituto: p.instituto, ano: p.ano }); limparSelecao(); }}
+                className="w-full text-left border-2 border-slate-900 rounded-xl p-4 hover:bg-stone-50 transition flex items-center justify-between"
+              >
+                <div>
+                  <p className="font-mono font-bold text-sm text-slate-900">{p.instituto} · {p.ano}</p>
+                  <p className="text-xs text-stone-500 mt-1">{p.total} questõe{p.total === 1 ? '' : 's'}</p>
+                </div>
+                <span className="text-stone-400">▸</span>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    </Shell>
+  );
+
+  // Tela: conteúdo de uma pasta (todas as questões daquele instituto+ano)
+  if (modo === 'editar' && !questaoEditando && pastaSelecionada) {
+    const questoesDaPasta = questoesSalvas.filter(q => q.instituto === pastaSelecionada.instituto && q.ano === pastaSelecionada.ano);
+    return (
+      <Shell>
+        <div className="bg-white border-2 border-slate-900 rounded-2xl p-5">
+          <div className="flex justify-between items-center mb-4">
+            <button onClick={() => { setPastaSelecionada(null); limparSelecao(); }} className="text-xs text-stone-400 font-mono underline">◂ pastas</button>
+            <span className="text-xs font-mono text-stone-500 uppercase">{pastaSelecionada.instituto} · {pastaSelecionada.ano}</span>
+          </div>
+          {sucesso && <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3 mb-4 text-xs text-emerald-700">{sucesso}</div>}
+          {erro && <div className="bg-red-50 border border-red-200 rounded-lg p-3 mb-4 text-xs text-red-700">{erro}</div>}
+
+          {questoesDaPasta.length > 0 && (
+            <div className="border border-stone-200 rounded-xl p-3 mb-4 bg-stone-50 space-y-3">
+              <div className="flex justify-between items-center">
+                <span className="text-xs font-mono text-stone-500">{selecionadas.length} selecionada(s) de {questoesDaPasta.length}</span>
+                <div className="flex gap-3">
+                  <button onClick={() => setSelecionadas(questoesDaPasta.map(q => q.id))} className="text-xs font-mono text-emerald-700 underline">selecionar todas</button>
+                  <button onClick={limparSelecao} className="text-xs font-mono text-stone-400 underline">limpar</button>
+                </div>
+              </div>
+
+              {selecionadas.length > 0 && (
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="block text-xs font-mono uppercase tracking-wider text-stone-500 mb-1">Novo ano</label>
+                    <input
+                      type="number"
+                      value={novoAnoLote}
+                      onChange={e => setNovoAnoLote(e.target.value)}
+                      placeholder="— manter —"
+                      className="w-full border border-stone-300 rounded-lg p-2 bg-white text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-600"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-mono uppercase tracking-wider text-stone-500 mb-1">Novo gabarito</label>
+                    <select
+                      value={novaCorretaLote}
+                      onChange={e => setNovaCorretaLote(e.target.value)}
+                      className="w-full border border-stone-300 rounded-lg p-2 bg-white text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-600"
+                    >
+                      <option value="">— manter —</option>
+                      {['A', 'B', 'C', 'D', 'E'].map(l => <option key={l} value={l}>{l}</option>)}
+                    </select>
+                  </div>
+                  <button
+                    onClick={aplicarEdicaoEmLote}
+                    disabled={aplicandoLote}
+                    className="col-span-2 bg-emerald-700 text-white font-mono uppercase tracking-wider text-xs font-bold py-2.5 rounded-lg disabled:bg-stone-300 transition"
+                  >
+                    {aplicandoLote ? 'Aplicando...' : `Aplicar às ${selecionadas.length} questão(ões) ▸`}
+                  </button>
+                  <p className="col-span-2 text-xs text-stone-400">
+                    Deixe um campo em branco para não alterá-lo nas questões selecionadas.
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
+
           <div className="space-y-2 max-h-[60vh] overflow-y-auto">
-            {questoesSalvas.map(q => (
+            {questoesDaPasta.map(q => (
               <div
                 key={q.id}
                 className={`w-full flex items-start gap-2 border rounded-xl p-3 transition ${selecionadas.includes(q.id) ? 'border-emerald-600 bg-emerald-50' : 'border-stone-200 hover:bg-stone-50'}`}
@@ -1122,16 +1169,16 @@ export default function Professor() {
                   setQuestaoEditando(obj);
                   setErro(''); setSucesso('');
                 }} className="flex-1 text-left">
-                  <p className="text-xs font-mono text-stone-400">{q.instituto} · {q.ano} · {q.disciplina} · gabarito {q.correta}</p>
+                  <p className="text-xs font-mono text-stone-400">{q.disciplina} · {q.assunto} · gabarito {q.correta}</p>
                   <p className="text-sm text-slate-900 mt-1 line-clamp-2">{q.enunciado}</p>
                 </button>
               </div>
             ))}
           </div>
-        )}
-      </div>
-    </Shell>
-  );
+        </div>
+      </Shell>
+    );
+  }
 
   // Tela: editando questão específica
   if (modo === 'editar' && questaoEditando) return (
