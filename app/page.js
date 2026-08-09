@@ -75,14 +75,14 @@ export default function Home() {
       }
       setQuestoes(data || []);
 
-      // Carrega provas oficiais que já têm questões cadastradas
+      // Carrega provas oficiais que já têm questões vinculadas via prova_questoes
       const { data: provasData } = await supabase
         .from('provas')
-        .select('*, questoes(count)')
+        .select('*, prova_questoes(count)')
         .order('ano', { ascending: false });
       setProvas(
         (provasData || [])
-          .map((p) => ({ ...p, total: p.questoes?.[0]?.count || 0 }))
+          .map((p) => ({ ...p, total: p.prova_questoes?.[0]?.count || 0 }))
           .filter((p) => p.total > 0)
       );
 
@@ -134,18 +134,22 @@ export default function Home() {
     setTela('quiz');
   }
 
-  // Carrega todas as questões de uma prova oficial, na ordem original
+  // Carrega todas as questões de uma prova oficial, na ordem original,
+  // via a tabela de vínculo prova_questoes (que guarda prova_id + questao_id + numero)
   async function iniciarProva(prova) {
     const { data, error } = await supabase
-      .from('questoes')
-      .select('*')
+      .from('prova_questoes')
+      .select('numero, questoes(*)')
       .eq('prova_id', prova.id)
-      .order('numero_na_prova', { ascending: true });
+      .order('numero', { ascending: true });
 
     if (error || !data?.length) return;
 
+    const questoesDaProva = data.map((linha) => linha.questoes).filter(Boolean);
+    if (!questoesDaProva.length) return;
+
     setProvaAtual(prova);
-    setLista(data);
+    setLista(questoesDaProva);
     setIndice(0);
     setRespostas([]);
     setSelecionada(null);
