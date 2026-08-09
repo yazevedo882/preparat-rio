@@ -13,20 +13,50 @@ const DISCIPLINAS_PERMITIDAS = [
   'Espanhol', 'Artes', 'Educação Física', 'Informática', 'Atualidades',
 ];
 
-// Assuntos "canônicos" preferidos por disciplina — a IA deve tentar encaixar
-// a questão em um destes primeiro, antes de considerar reaproveitar outro já
-// existente no banco ou criar um assunto novo. Mantém as listas de estudo
-// concentradas em poucos temas amplos, em vez de fragmentadas.
-const ASSUNTOS_SUGERIDOS = {
+// Assuntos FECHADOS por disciplina — quando a disciplina tem uma lista aqui, a IA é
+// obrigada a escolher um destes (nunca cria um novo), mantendo no máximo ~10 assuntos
+// por disciplina e listas de estudo bem preenchidas. Nuances mais específicas (ex: tipo
+// de conjunção, uso de S/C/Ç/X) vão para o campo PADRÃO em vez de virarem assunto novo.
+const ASSUNTOS_FECHADOS = {
   'Língua Portuguesa': [
-    'Interpretação textual', 'Correção textual', 'Denotação e conotação',
-    'Expressão linguística', 'Concordância verbal e nominal',
-    'Regência verbal e nominal', 'Coesão e coerência textual',
-    'Figuras de linguagem', 'Ortografia e acentuação',
-    'Classes gramaticais', 'Pontuação', 'Sinônimos e antônimos',
-    'Gêneros e tipos textuais',
+    'Interpretação textual',
+    'Correção textual',
+    'Denotação e conotação',
+    'Expressão linguística',
+    'Concordância verbal e nominal',
+    'Ortografia e acentuação',
+    'Figuras de linguagem',
+    'Coesão e coerência textual',
+    'Pontuação',
+    'Classes gramaticais',
   ],
 };
+
+// Tenta encaixar um assunto retornado pela IA na lista fechada da disciplina,
+// via correspondência por palavras-chave, como rede de segurança caso a IA fuja da lista
+function normalizarAssunto(valor, disciplina) {
+  const fechados = ASSUNTOS_FECHADOS[disciplina];
+  if (!fechados || !valor) return valor;
+  const alvo = valor.trim().toLowerCase();
+  const exato = fechados.find(a => a.toLowerCase() === alvo);
+  if (exato) return exato;
+  const regras = [
+    [/concord/, 'Concordância verbal e nominal'],
+    [/reg[êe]nc/, 'Concordância verbal e nominal'],
+    [/ortograf|acentua|[sc]edilha|uso de s|uso de c/, 'Ortografia e acentuação'],
+    [/pontua/, 'Pontuação'],
+    [/classe gramatical|substantivo|adjetivo|\bverbo\b|adv[eé]rbio|pronome|conjun[cç][aã]o|conjun[cç][oõ]es|preposi[cç]/, 'Classes gramaticais'],
+    [/figura|met[aá]fora|ironia|hip[eé]rbole|met[oó]nimia/, 'Figuras de linguagem'],
+    [/coes|coer[eê]n/, 'Coesão e coerência textual'],
+    [/denota|conota|sentido literal|sentido figurado/, 'Denotação e conotação'],
+    [/corre[cç][aã]o|reescrit|norma culta|erro gramatical/, 'Correção textual'],
+    [/interpret|compreens[aã]o|ideia central|tema central|g[êe]nero textual|tipo textual/, 'Interpretação textual'],
+  ];
+  for (const [re, canonico] of regras) {
+    if (re.test(alvo)) return canonico;
+  }
+  return 'Interpretação textual'; // fallback mais abrangente, evita perder a questão
+}
 
 // Parsing tolerante: tenta JSON normal, depois corta sobras, depois extrai campo por campo
 function tentarExtrairJSON(texto) {
@@ -99,9 +129,9 @@ export async function POST(request) {
     const listaPadroes = (padroesExistentes || []).map(p => p.nome).join(', ');
 
     // Busca assuntos já cadastrados nessa disciplina, para a IA priorizar reaproveitar
-    // em vez de criar um assunto hiperespecífico e exclusivo pra cada questão
+    // (só usado quando a disciplina NÃO tem uma lista fechada definida acima)
     let assuntosExistentes = [];
-    if (disciplinaNormalizada) {
+    if (disciplinaNormalizada && !ASSUNTOS_FECHADOS[disciplinaNormalizada]) {
       const { data } = await supabaseAdmin
         .from('questoes')
         .select('assunto')
@@ -110,8 +140,13 @@ export async function POST(request) {
         .limit(500);
       assuntosExistentes = [...new Set((data || []).map(a => a.assunto).filter(Boolean))].slice(0, 40);
     }
-    const assuntosCanonicos = ASSUNTOS_SUGERIDOS[disciplinaNormalizada] || [];
-    const listaAssuntos = [...new Set([...assuntosCanonicos, ...assuntosExistentes])].join(', ');
+
+    const assuntosFechados = ASSUNTOS_FECHADOS[disciplinaNormalizada];
+    const instrucaoAssunto = assuntosFechados
+      ? `2. ASSUNTO — esta é uma regra RÍGIDA e OBRIGATÓRIA: escolha EXATAMENTE um destes ${assuntosFechados.length} assuntos, nunca crie um novo, nunca escreva variação de nome:
+${assuntosFechados.join(', ')}
+Se a questão tiver uma nuance mais específica que não cabe em nenhum nome acima (ex: um tipo específico de conjunção, uso de S/C/Ç/X, um verbo irregular específico), NÃO crie um assunto novo para isso — em vez disso, descreva essa nuance específica no campo PADRÃO (item 3 abaixo). O campo ASSUNTO deve ficar sempre restrito a esses ${assuntosFechados.length} valores, para que cada assunto acumule muitas questões.`
+      : `2. ASSUNTO — o tema específico dentro da disciplina. Priorize reaproveitar um destes assuntos já cadastrados: ${assuntosExistentes.join(', ') || '(nenhum ainda, crie um nome amplo e reutilizável)'}. Só crie um assunto novo se a questão realmente não se encaixar em nenhum. Use nomes AMPLOS e REUTILIZÁVEIS, nunca uma descrição específica de uma única questão.`;
 
     const SYSTEM = `Você é um especialista em questões de vestibular de Institutos Federais do Brasil.
 
@@ -121,8 +156,7 @@ Analise a questão abaixo e determine:
 ${DISCIPLINAS_PERMITIDAS.join(', ')}
 Mesmo que a disciplina informada no texto venha escrita diferente (ex: "Português", "Portugues"), normalize para o nome correto da lista acima (ex: "Língua Portuguesa").
 
-2. ASSUNTO — o tema específico dentro da disciplina. Esta é uma regra CRÍTICA: você DEVE tentar encaixar a questão em um destes assuntos já usados (nessa ordem de preferência): ${listaAssuntos || '(nenhum ainda, crie um nome amplo e reutilizável)'}.
-Só crie um assunto novo se a questão REALMENTE não se encaixar em nenhum desses — o que deve ser raro. Ao criar um assunto novo, use um nome AMPLO e REUTILIZÁVEL (ex: "Interpretação textual", "Concordância verbal") — NUNCA uma descrição longa e específica de uma única questão (ex: NUNCA "Ambiguidade lexical em texto humorístico sobre viagens"; nesse caso o assunto correto seria "Interpretação textual" ou "Figuras de linguagem"). O objetivo é que dezenas de questões diferentes compartilhem o mesmo assunto, formando listas de estudo robustas — evite a todo custo criar um assunto exclusivo para uma questão só.
+${instrucaoAssunto}
 
 3. PADRÃO — o tipo/formato da questão. Prefira reutilizar um destes já existentes: ${listaPadroes || '(nenhum ainda, pode criar o primeiro)'}. Só crie um novo nome se a questão realmente não se encaixar em nenhum.
 
@@ -174,6 +208,10 @@ Alternativas: ${Array.isArray(opcoes) ? opcoes.map((o, i) => `${letras[i]}) ${o}
     // Garante que a disciplina final também está normalizada, mesmo se a IA "escorregar"
     if (resultado.disciplina) {
       resultado.disciplina = normalizarDisciplina(resultado.disciplina);
+    }
+    // Garante que o assunto respeita a lista fechada da disciplina, se houver uma definida
+    if (resultado.assunto && resultado.disciplina) {
+      resultado.assunto = normalizarAssunto(resultado.assunto, resultado.disciplina);
     }
 
     // Salva padrão novo na biblioteca, se for o caso
