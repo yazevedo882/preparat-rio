@@ -253,6 +253,12 @@ export default function Professor() {
   const [buscandoSalvas, setBuscandoSalvas] = useState(false);
   const [questaoEditando, setQuestaoEditando] = useState(null);
 
+  // Edição em lote (selecionar várias questões salvas e mudar ano/gabarito de todas de uma vez)
+  const [selecionadas, setSelecionadas] = useState([]);
+  const [novoAnoLote, setNovoAnoLote] = useState('');
+  const [novaCorretaLote, setNovaCorretaLote] = useState('');
+  const [aplicandoLote, setAplicandoLote] = useState(false);
+
   // Biblioteca de padrões — vem do banco, cresce conforme a IA classifica
   const [padroesDisponiveis, setPadroesDisponiveis] = useState([]);
 
@@ -666,6 +672,41 @@ export default function Professor() {
     setBuscandoSalvas(false);
   }
 
+  // ── Seleção múltipla na lista de questões salvas ──
+  function alternarSelecao(id) {
+    setSelecionadas(sel => sel.includes(id) ? sel.filter(s => s !== id) : [...sel, id]);
+  }
+  function selecionarTodas() {
+    setSelecionadas(questoesSalvas.map(q => q.id));
+  }
+  function limparSelecao() {
+    setSelecionadas([]);
+    setNovoAnoLote('');
+    setNovaCorretaLote('');
+  }
+
+  // ── Aplica ano e/ou gabarito a todas as questões selecionadas de uma vez ──
+  async function aplicarEdicaoEmLote() {
+    if (!selecionadas.length) return;
+    if (!novoAnoLote && !novaCorretaLote) {
+      setErro('Preencha o ano e/ou o gabarito que deseja aplicar às questões selecionadas.');
+      return;
+    }
+    setAplicandoLote(true); setErro(''); setSucesso('');
+    const camposParaAtualizar = {};
+    if (novoAnoLote) camposParaAtualizar.ano = Number(novoAnoLote);
+    if (novaCorretaLote) camposParaAtualizar.correta = novaCorretaLote;
+    const { error } = await supabase.from('questoes').update(camposParaAtualizar).in('id', selecionadas);
+    if (error) {
+      setErro(error.message);
+    } else {
+      setSucesso(`${selecionadas.length} questão(ões) atualizada(s)!`);
+      limparSelecao();
+      buscarQuestoesSalvas();
+    }
+    setAplicandoLote(false);
+  }
+
   // ── Salvar edição ──
   async function salvarEdicao() {
     if (!questaoEditando) return;
@@ -951,21 +992,82 @@ export default function Professor() {
           <span className="text-xs font-mono text-stone-500 uppercase">Editar questões</span>
         </div>
         {sucesso && <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3 mb-4 text-xs text-emerald-700">{sucesso}</div>}
+        {erro && <div className="bg-red-50 border border-red-200 rounded-lg p-3 mb-4 text-xs text-red-700">{erro}</div>}
+
+        {!buscandoSalvas && questoesSalvas.length > 0 && (
+          <div className="border border-stone-200 rounded-xl p-3 mb-4 bg-stone-50 space-y-3">
+            <div className="flex justify-between items-center">
+              <span className="text-xs font-mono text-stone-500">{selecionadas.length} selecionada(s) de {questoesSalvas.length}</span>
+              <div className="flex gap-3">
+                <button onClick={selecionarTodas} className="text-xs font-mono text-emerald-700 underline">selecionar todas</button>
+                <button onClick={limparSelecao} className="text-xs font-mono text-stone-400 underline">limpar</button>
+              </div>
+            </div>
+
+            {selecionadas.length > 0 && (
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block text-xs font-mono uppercase tracking-wider text-stone-500 mb-1">Novo ano</label>
+                  <input
+                    type="number"
+                    value={novoAnoLote}
+                    onChange={e => setNovoAnoLote(e.target.value)}
+                    placeholder="— manter —"
+                    className="w-full border border-stone-300 rounded-lg p-2 bg-white text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-600"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-mono uppercase tracking-wider text-stone-500 mb-1">Novo gabarito</label>
+                  <select
+                    value={novaCorretaLote}
+                    onChange={e => setNovaCorretaLote(e.target.value)}
+                    className="w-full border border-stone-300 rounded-lg p-2 bg-white text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-600"
+                  >
+                    <option value="">— manter —</option>
+                    {['A', 'B', 'C', 'D', 'E'].map(l => <option key={l} value={l}>{l}</option>)}
+                  </select>
+                </div>
+                <button
+                  onClick={aplicarEdicaoEmLote}
+                  disabled={aplicandoLote}
+                  className="col-span-2 bg-emerald-700 text-white font-mono uppercase tracking-wider text-xs font-bold py-2.5 rounded-lg disabled:bg-stone-300 transition"
+                >
+                  {aplicandoLote ? 'Aplicando...' : `Aplicar às ${selecionadas.length} questão(ões) ▸`}
+                </button>
+                <p className="col-span-2 text-xs text-stone-400">
+                  Deixe um campo em branco para não alterá-lo nas questões selecionadas.
+                </p>
+              </div>
+            )}
+          </div>
+        )}
+
         {buscandoSalvas ? (
           <p className="text-sm text-stone-400">Carregando...</p>
         ) : (
           <div className="space-y-2 max-h-[60vh] overflow-y-auto">
             {questoesSalvas.map(q => (
-              <button key={q.id} onClick={() => {
-                const letras = (q.opcoes?.length === 5) ? ['A','B','C','D','E'] : ['A','B','C','D'];
-                const obj = { ...q, numOpcoes: q.opcoes?.length || 4 };
-                letras.forEach((l, i) => { obj[`opcao${l}`] = q.opcoes?.[i] || ''; });
-                setQuestaoEditando(obj);
-                setErro(''); setSucesso('');
-              }} className="w-full text-left border border-stone-200 rounded-xl p-3 hover:bg-stone-50 transition">
-                <p className="text-xs font-mono text-stone-400">{q.instituto} · {q.ano} · {q.disciplina}</p>
-                <p className="text-sm text-slate-900 mt-1 line-clamp-2">{q.enunciado}</p>
-              </button>
+              <div
+                key={q.id}
+                className={`w-full flex items-start gap-2 border rounded-xl p-3 transition ${selecionadas.includes(q.id) ? 'border-emerald-600 bg-emerald-50' : 'border-stone-200 hover:bg-stone-50'}`}
+              >
+                <input
+                  type="checkbox"
+                  checked={selecionadas.includes(q.id)}
+                  onChange={() => alternarSelecao(q.id)}
+                  className="mt-1 w-4 h-4 flex-shrink-0 accent-emerald-700"
+                />
+                <button onClick={() => {
+                  const letras = (q.opcoes?.length === 5) ? ['A','B','C','D','E'] : ['A','B','C','D'];
+                  const obj = { ...q, numOpcoes: q.opcoes?.length || 4 };
+                  letras.forEach((l, i) => { obj[`opcao${l}`] = q.opcoes?.[i] || ''; });
+                  setQuestaoEditando(obj);
+                  setErro(''); setSucesso('');
+                }} className="flex-1 text-left">
+                  <p className="text-xs font-mono text-stone-400">{q.instituto} · {q.ano} · {q.disciplina} · gabarito {q.correta}</p>
+                  <p className="text-sm text-slate-900 mt-1 line-clamp-2">{q.enunciado}</p>
+                </button>
+              </div>
             ))}
           </div>
         )}
