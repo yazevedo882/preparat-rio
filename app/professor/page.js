@@ -259,6 +259,10 @@ export default function Professor() {
   const [novaCorretaLote, setNovaCorretaLote] = useState('');
   const [aplicandoLote, setAplicandoLote] = useState(false);
 
+  // Reclassificação automática em lote (disciplina + assunto) de todas as questões salvas
+  const [reclassificando, setReclassificando] = useState(false);
+  const [progressoReclassificacao, setProgressoReclassificacao] = useState('');
+
   // Biblioteca de padrões — vem do banco, cresce conforme a IA classifica
   const [padroesDisponiveis, setPadroesDisponiveis] = useState([]);
 
@@ -672,6 +676,52 @@ export default function Professor() {
     setBuscandoSalvas(false);
   }
 
+  // ── Reclassifica TODAS as questões já salvas no banco (disciplina + assunto),
+  //     consolidando assuntos fragmentados em categorias mais amplas e reutilizáveis ──
+  async function reclassificarTodasSalvas() {
+    setReclassificando(true);
+    setProgressoReclassificacao('Buscando questões...');
+    setErro(''); setSucesso('');
+    try {
+      const { data: todas, error } = await supabase
+        .from('questoes')
+        .select('id, enunciado, opcoes, disciplina, assunto')
+        .order('id');
+      if (error) throw new Error(error.message);
+      if (!todas?.length) { setSucesso('Nenhuma questão encontrada para reclassificar.'); setReclassificando(false); return; }
+
+      const TAMANHO_BLOCO = 4;
+      let feitas = 0;
+      let atualizadas = 0;
+
+      for (let i = 0; i < todas.length; i += TAMANHO_BLOCO) {
+        const bloco = todas.slice(i, i + TAMANHO_BLOCO);
+        await Promise.all(bloco.map(async (q) => {
+          try {
+            const res = await fetch('/api/classificar', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ enunciado: q.enunciado, opcoes: q.opcoes, disciplina: q.disciplina, assunto: q.assunto }),
+            });
+            const data = await res.json();
+            if (data.error || !data.disciplina) return;
+            await supabase.from('questoes').update({ disciplina: data.disciplina, assunto: data.assunto || q.assunto }).eq('id', q.id);
+            atualizadas++;
+          } catch (e) { /* pula essa questão, segue as outras */ }
+        }));
+        feitas += bloco.length;
+        setProgressoReclassificacao(`Reclassificando... (${feitas}/${todas.length})`);
+      }
+
+      setSucesso(`${atualizadas} de ${todas.length} questão(ões) reclassificada(s) com sucesso.`);
+      buscarQuestoesSalvas();
+    } catch (e) {
+      setErro('Erro ao reclassificar: ' + e.message);
+    }
+    setProgressoReclassificacao('');
+    setReclassificando(false);
+  }
+
   // ── Seleção múltipla na lista de questões salvas ──
   function alternarSelecao(id) {
     setSelecionadas(sel => sel.includes(id) ? sel.filter(s => s !== id) : [...sel, id]);
@@ -993,6 +1043,14 @@ export default function Professor() {
         </div>
         {sucesso && <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3 mb-4 text-xs text-emerald-700">{sucesso}</div>}
         {erro && <div className="bg-red-50 border border-red-200 rounded-lg p-3 mb-4 text-xs text-red-700">{erro}</div>}
+
+        <button
+          onClick={reclassificarTodasSalvas}
+          disabled={reclassificando}
+          className="w-full mb-4 bg-amber-100 text-amber-800 border border-amber-300 font-mono uppercase tracking-wider text-xs font-bold py-2.5 rounded-lg disabled:opacity-50"
+        >
+          {reclassificando ? (progressoReclassificacao || 'Reclassificando...') : '🔄 Reclassificar todas automaticamente'}
+        </button>
 
         {!buscandoSalvas && questoesSalvas.length > 0 && (
           <div className="border border-stone-200 rounded-xl p-3 mb-4 bg-stone-50 space-y-3">
