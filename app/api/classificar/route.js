@@ -13,6 +13,21 @@ const DISCIPLINAS_PERMITIDAS = [
   'Espanhol', 'Artes', 'Educação Física', 'Informática', 'Atualidades',
 ];
 
+// Assuntos "canônicos" preferidos por disciplina — a IA deve tentar encaixar
+// a questão em um destes primeiro, antes de considerar reaproveitar outro já
+// existente no banco ou criar um assunto novo. Mantém as listas de estudo
+// concentradas em poucos temas amplos, em vez de fragmentadas.
+const ASSUNTOS_SUGERIDOS = {
+  'Língua Portuguesa': [
+    'Interpretação textual', 'Correção textual', 'Denotação e conotação',
+    'Expressão linguística', 'Concordância verbal e nominal',
+    'Regência verbal e nominal', 'Coesão e coerência textual',
+    'Figuras de linguagem', 'Ortografia e acentuação',
+    'Classes gramaticais', 'Pontuação', 'Sinônimos e antônimos',
+    'Gêneros e tipos textuais',
+  ],
+};
+
 // Parsing tolerante: tenta JSON normal, depois corta sobras, depois extrai campo por campo
 function tentarExtrairJSON(texto) {
   let limpo = texto.replace(/```json/gi, '').replace(/```/g, '').trim();
@@ -95,7 +110,8 @@ export async function POST(request) {
         .limit(500);
       assuntosExistentes = [...new Set((data || []).map(a => a.assunto).filter(Boolean))].slice(0, 40);
     }
-    const listaAssuntos = assuntosExistentes.join(', ');
+    const assuntosCanonicos = ASSUNTOS_SUGERIDOS[disciplinaNormalizada] || [];
+    const listaAssuntos = [...new Set([...assuntosCanonicos, ...assuntosExistentes])].join(', ');
 
     const SYSTEM = `Você é um especialista em questões de vestibular de Institutos Federais do Brasil.
 
@@ -105,8 +121,8 @@ Analise a questão abaixo e determine:
 ${DISCIPLINAS_PERMITIDAS.join(', ')}
 Mesmo que a disciplina informada no texto venha escrita diferente (ex: "Português", "Portugues"), normalize para o nome correto da lista acima (ex: "Língua Portuguesa").
 
-2. ASSUNTO — o tema específico dentro da disciplina. PRIORIZE FORTEMENTE reaproveitar um destes assuntos já cadastrados nessa disciplina: ${listaAssuntos || '(nenhum ainda cadastrado nessa disciplina, pode criar um novo com nome amplo e reutilizável)'}.
-Só crie um assunto novo se a questão realmente não se encaixar em nenhum desses. Ao criar um assunto novo, use um nome AMPLO e REUTILIZÁVEL (ex: "Interpretação textual", "Concordância verbal", "Figuras de linguagem", "Coesão textual") — nunca uma descrição longa e específica de uma única questão (ex: nunca "Ambiguidade lexical em texto humorístico sobre viagens" — nesse caso o assunto correto seria só "Interpretação textual" ou "Figuras de linguagem"). O objetivo é que várias questões diferentes compartilhem o mesmo assunto, formando listas de estudo com várias questões cada.
+2. ASSUNTO — o tema específico dentro da disciplina. Esta é uma regra CRÍTICA: você DEVE tentar encaixar a questão em um destes assuntos já usados (nessa ordem de preferência): ${listaAssuntos || '(nenhum ainda, crie um nome amplo e reutilizável)'}.
+Só crie um assunto novo se a questão REALMENTE não se encaixar em nenhum desses — o que deve ser raro. Ao criar um assunto novo, use um nome AMPLO e REUTILIZÁVEL (ex: "Interpretação textual", "Concordância verbal") — NUNCA uma descrição longa e específica de uma única questão (ex: NUNCA "Ambiguidade lexical em texto humorístico sobre viagens"; nesse caso o assunto correto seria "Interpretação textual" ou "Figuras de linguagem"). O objetivo é que dezenas de questões diferentes compartilhem o mesmo assunto, formando listas de estudo robustas — evite a todo custo criar um assunto exclusivo para uma questão só.
 
 3. PADRÃO — o tipo/formato da questão. Prefira reutilizar um destes já existentes: ${listaPadroes || '(nenhum ainda, pode criar o primeiro)'}. Só crie um novo nome se a questão realmente não se encaixar em nenhum.
 
