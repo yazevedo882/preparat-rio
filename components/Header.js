@@ -24,6 +24,9 @@ export default function Header() {
             Olá, {profile?.nome || user.email}
           </span>
           <div className="flex gap-3 items-center">
+            <Link href="/analise-erros" className="underline text-slate-900">
+              Meus erros
+            </Link>
             {profile?.is_professor && (
               <Link href="/professor" className="underline text-slate-900">
                 Área do professor
